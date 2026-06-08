@@ -1,0 +1,10 @@
+# Phase 1 (aktiv - ohne Kamera/Roboter)
+pygame>=2.5.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# Phase 2 - Vision (einkommentieren wenn Kamera angeschlossen)
+# opencv-python>=4.8.0
+# ultralytics>=8.0.0
+
+# Phase 3 - Roboter (nur stdlib socket noetig, keine Extra-Pakete)
