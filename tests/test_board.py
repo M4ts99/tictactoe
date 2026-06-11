@@ -10,10 +10,13 @@ def test_place_and_win():
 
 def test_draw():
     b = Board()
-    for p, f in [("X",1),("O",2),("X",3),("O",4),("X",6),("X",7),("O",8),("X",9),("O",5)]:
+    # X: 1,6,8  |  O: 2,3,4,7,9  |  Kein Gewinner
+    for p, f in [("X",1),("O",2),("O",3),("X",6),("O",4),("X",8),("O",7),("O",9),("X",5)]:
         b.place(f, p)
-    assert b.is_full() and b.winner is None
+    assert b.is_full(), "Feld sollte voll sein"
+    assert b.winner is None, f"Kein Gewinner erwartet, aber {b.winner} hat gewonnen"
     print("  [OK] test_draw")
+
 
 def test_block():
     b = Board()
