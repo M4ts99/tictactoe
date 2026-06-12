@@ -24,7 +24,6 @@ class Detection:
     def center_y(self) -> float:
         return (self.y1 + self.y2) / 2
 
-    @property
     def width(self) -> int:
         return self.x2 - self.x1
 
@@ -39,7 +38,7 @@ class YoloDetector:
     Gibt eine Liste von Detection-Objekten zurueck.
     """
 
-    CLASS_NAMES = {0: "O"}
+    CLASS_NAMES = {0: "O",1: "X"}
 
     def __init__(self, model_path: str, confidence: float = 0.5):
         self.model_path = model_path

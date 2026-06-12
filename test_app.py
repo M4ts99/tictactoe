@@ -34,7 +34,7 @@ BOARD_RECT = (150, 80, 1130, 650)
 
 # Wie viele aufeinanderfolgende Frames muss ein Stein erkannt werden
 # bevor er als "platziert" gilt (verhindert Flackern)
-CONFIRMATION_FRAMES = 8
+CONFIRMATION_FRAMES = 24
 
 # =============================================================================
 # Board-Zustand Klasse

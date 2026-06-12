@@ -1,5 +1,6 @@
-train: C:\Users\cobot-prog\Documents\TicTacToe\tictactoe\vision\dataset\images\train
-val:   C:\Users\cobot-prog\Documents\TicTacToe\tictactoe\vision\dataset\images\val
-nc: 1
-names:
-  - 0
+path: C:/Users/cobot-prog/Documents/TicTacToe/tictactoe/vision/dataset
+train: images/train
+val: images/val
+
+nc: 2
+names: ['O', 'X']

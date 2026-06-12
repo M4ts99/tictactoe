@@ -10,7 +10,7 @@ CAMERA_FPS    = 30
 
 # --- YOLO ---
 YOLO_MODEL_PATH = "vision/best.pt"
-YOLO_CONFIDENCE = 0.05
+YOLO_CONFIDENCE = 0.5
 YOLO_CLASSES    = {0: "O"}
 
 # --- Board Mapper: Pixel-Koordinaten der 9 Felder (nach Kalibrierung anpassen) ---
