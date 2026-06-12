@@ -57,11 +57,11 @@ class GameManager:
     def is_ai_turn(self) -> bool:
         return self.state == "running" and self.current_turn == self.ai_player
 
-    def reset(self):
-        """Startet eine neue Runde (Scores bleiben erhalten)."""
+    def reset(self, start_player: str = "X"):
         self.board.reset()
-        self.current_turn = "X"
+        self.current_turn = start_player   # ← flexibel
         self.state = "running"
+
 
     def full_reset(self):
         """Vollstaendiger Reset inkl. Scores."""

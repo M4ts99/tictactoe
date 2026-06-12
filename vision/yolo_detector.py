@@ -24,6 +24,7 @@ class Detection:
     def center_y(self) -> float:
         return (self.y1 + self.y2) / 2
 
+    @property                      # ← hinzufügen
     def width(self) -> int:
         return self.x2 - self.x1
 
