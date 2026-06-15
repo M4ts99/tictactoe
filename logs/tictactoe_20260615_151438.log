@@ -1,0 +1,50 @@
+2026-06-15 15:14:39,157 [INFO] socket_client: Verbinde mit Doosan @ 127.0.0.1:12345
+2026-06-15 15:14:39,161 [INFO] socket_client: Verbindung erfolgreich hergestellt.
+2026-06-15 15:14:44,802 [DEBUG] matplotlib: matplotlib data path: C:\Users\lambe\OneDrive\Dokumente\Lavera\TTTT\tictactoe\.venv\Lib\site-packages\matplotlib\mpl-data
+2026-06-15 15:14:44,817 [DEBUG] matplotlib: CONFIGDIR=C:\Users\lambe\.matplotlib
+2026-06-15 15:14:44,820 [DEBUG] matplotlib: interactive is False
+2026-06-15 15:14:44,820 [DEBUG] matplotlib: platform is win32
+2026-06-15 15:14:44,928 [DEBUG] matplotlib: CACHEDIR=C:\Users\lambe\.matplotlib
+2026-06-15 15:14:44,943 [DEBUG] matplotlib.font_manager: Using fontManager instance from C:\Users\lambe\.matplotlib\fontlist-v3.11.0.json
+2026-06-15 15:14:49,784 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 15:14:49,784 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 15:14:50,539 [DEBUG] urllib3.connectionpool: Starting new HTTPS connection (1): api.github.com:443
+2026-06-15 15:14:51,265 [DEBUG] urllib3.connectionpool: https://api.github.com:443 "GET /repos/ultralytics/assets/releases/tags/v8.4.0 HTTP/1.1" 200 None
+2026-06-15 15:14:51,788 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:14:51,790 [INFO] robot_controller: place_stone(Feld 7) @ (7.0, 0.0, 0.0)
+2026-06-15 15:14:51,790 [INFO] socket_client: Sende Befehl: PLACE 7.0 0.0 0.0
+2026-06-15 15:14:53,793 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:14:56,961 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 15:14:56,962 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 15:14:58,964 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:14:58,964 [INFO] robot_controller: place_stone(Feld 9) @ (9.0, 0.0, 0.0)
+2026-06-15 15:14:58,964 [INFO] socket_client: Sende Befehl: PLACE 9.0 0.0 0.0
+2026-06-15 15:15:00,966 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:02,186 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 15:15:02,186 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 15:15:04,188 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:04,188 [INFO] robot_controller: place_stone(Feld 2) @ (2.0, 0.0, 0.0)
+2026-06-15 15:15:04,188 [INFO] socket_client: Sende Befehl: PLACE 2.0 0.0 0.0
+2026-06-15 15:15:06,190 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:07,317 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 15:15:07,317 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 15:15:09,319 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:09,319 [INFO] robot_controller: place_stone(Feld 4) @ (4.0, 0.0, 0.0)
+2026-06-15 15:15:09,319 [INFO] socket_client: Sende Befehl: PLACE 4.0 0.0 0.0
+2026-06-15 15:15:11,321 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:23,632 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 15:15:23,633 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 15:15:25,635 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:25,635 [INFO] robot_controller: place_stone(Feld 1) @ (1.0, 0.0, 0.0)
+2026-06-15 15:15:25,635 [INFO] socket_client: Sende Befehl: PLACE 1.0 0.0 0.0
+2026-06-15 15:15:27,637 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:28,863 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 15:15:28,863 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 15:15:30,865 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:30,865 [INFO] robot_controller: place_stone(Feld 6) @ (6.0, 0.0, 0.0)
+2026-06-15 15:15:30,865 [INFO] socket_client: Sende Befehl: PLACE 6.0 0.0 0.0
+2026-06-15 15:15:32,867 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:15:33,287 [INFO] robot_controller: push_reward() @ (0.0, 0.0, 0.0)
+2026-06-15 15:15:33,287 [INFO] socket_client: Sende Befehl: PUSH 0.0 0.0 0.0
+2026-06-15 15:15:34,291 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 15:16:04,145 [INFO] socket_client: Verbindung wird getrennt.

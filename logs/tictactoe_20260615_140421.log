@@ -1,0 +1,29 @@
+2026-06-15 14:04:22,070 [INFO] socket_client: Verbinde mit Doosan @ 127.0.0.1:12345
+2026-06-15 14:04:22,072 [INFO] socket_client: Verbindung erfolgreich hergestellt.
+2026-06-15 14:04:26,898 [DEBUG] matplotlib: matplotlib data path: C:\Users\lambe\OneDrive\Dokumente\Lavera\TTTT\tictactoe\.venv\Lib\site-packages\matplotlib\mpl-data
+2026-06-15 14:04:26,912 [DEBUG] matplotlib: CONFIGDIR=C:\Users\lambe\.matplotlib
+2026-06-15 14:04:26,915 [DEBUG] matplotlib: interactive is False
+2026-06-15 14:04:26,915 [DEBUG] matplotlib: platform is win32
+2026-06-15 14:04:26,984 [DEBUG] matplotlib: CACHEDIR=C:\Users\lambe\.matplotlib
+2026-06-15 14:04:26,992 [DEBUG] matplotlib.font_manager: Using fontManager instance from C:\Users\lambe\.matplotlib\fontlist-v3.11.0.json
+2026-06-15 14:04:32,574 [DEBUG] urllib3.connectionpool: Starting new HTTPS connection (1): api.github.com:443
+2026-06-15 14:04:33,297 [DEBUG] urllib3.connectionpool: https://api.github.com:443 "GET /repos/ultralytics/assets/releases/tags/v8.4.0 HTTP/1.1" 200 None
+2026-06-15 14:05:07,526 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 14:05:07,526 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 14:05:09,529 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 14:05:09,529 [INFO] robot_controller: place_stone(Feld 5) @ (5.0, 0.0, 0.0)
+2026-06-15 14:05:09,529 [INFO] socket_client: Sende Befehl: PLACE 5.0 0.0 0.0
+2026-06-15 14:05:11,531 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 14:05:57,540 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 14:05:57,541 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 14:05:59,544 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 14:05:59,544 [INFO] robot_controller: place_stone(Feld 1) @ (1.0, 0.0, 0.0)
+2026-06-15 14:05:59,545 [INFO] socket_client: Sende Befehl: PLACE 1.0 0.0 0.0
+2026-06-15 14:06:01,546 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 14:06:03,030 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
+2026-06-15 14:06:03,031 [INFO] socket_client: Sende Befehl: PICK 0.0 0.0 0.0
+2026-06-15 14:06:05,033 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 14:06:05,033 [INFO] robot_controller: place_stone(Feld 6) @ (6.0, 0.0, 0.0)
+2026-06-15 14:06:05,033 [INFO] socket_client: Sende Befehl: PLACE 6.0 0.0 0.0
+2026-06-15 14:06:07,035 [INFO] socket_client: Empfange Antwort: OK
+2026-06-15 14:11:11,095 [INFO] socket_client: Verbindung wird getrennt.
