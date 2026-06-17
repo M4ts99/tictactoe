@@ -4,6 +4,11 @@
 import cv2
 import numpy as np
 
+CUSTOM_FIELD_MAP = {
+    7: (0, 2), 8: (0, 1), 9: (0, 0),
+    4: (1, 2), 5: (1, 1), 6: (1, 0),
+    1: (2, 2), 2: (2, 1), 3: (2, 0)
+}
 
 class BoardMapper:
     """
@@ -28,15 +33,7 @@ class BoardMapper:
 
     def get_field(self, cx: float, cy: float) -> int | None:
         """
-        Gibt die Feld-ID (1-9) zurueck wenn der Punkt (cx, cy)
-        innerhalb des Spielfelds liegt, sonst None.
-
-        Feld-Layout:
-            1 | 2 | 3
-            ---------
-            4 | 5 | 6
-            ---------
-            7 | 8 | 9
+        Gibt die Feld-ID zurueck basierend auf CUSTOM_FIELD_MAP.
         """
         if not (self.x1 <= cx <= self.x2 and self.y1 <= cy <= self.y2):
             return None
@@ -44,14 +41,17 @@ class BoardMapper:
         row = int((cy - self.y1) / self.cell_h)
         col = min(col, 2)
         row = min(row, 2)
-        return row * 3 + col + 1
+        
+        for fid, (r, c) in CUSTOM_FIELD_MAP.items():
+            if r == row and c == col:
+                return fid
+        return None
 
     def get_cell_rect(self, field_id: int) -> tuple:
         """
         Gibt (x1, y1, x2, y2) des Felds zurueck.
         """
-        row = (field_id - 1) // 3
-        col = (field_id - 1) % 3
+        row, col = CUSTOM_FIELD_MAP.get(field_id, (0, 0))
         x1 = int(self.x1 + col * self.cell_w)
         y1 = int(self.y1 + row * self.cell_h)
         x2 = int(x1 + self.cell_w)

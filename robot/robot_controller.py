@@ -1,11 +1,15 @@
 # =============================================================================
 # robot/robot_controller.py
 #
-# Sendet einfache Befehle an den Doosan:
-#   PICK X / PICK O   – Stein greifen (kein HOME danach, PLACE folgt sofort)
-#   PLACE 1–9         – Stein ablegen (HOME danach im DRL)
-#   PUSH              – Belohnung schieben (HOME danach im DRL)
-#   HOME              – Roboter faehrt zu GLOBAL_HOME (fuer Reset)
+# Neue feste Logik:
+#   - Mensch spielt immer X
+#   - Roboter spielt immer O
+#
+# Protokoll:
+#   PICK O <index>   - Stein greifen (Index 1-5), kein HOME danach
+#   PLACE <1-9>      - Stein ablegen, HOME danach im DRL
+#   PUSH             - Belohnung schieben, HOME danach im DRL
+#   HOME             - Roboter faehrt zu GLOBAL_HOME
 #
 # Die gesamte Bewegungslogik liegt im DRL-Script auf dem Roboter.
 # =============================================================================
@@ -15,30 +19,36 @@ from robot.socket_client import DoosanSocket
 class RobotController:
     """
     Steuert den Doosan M1013 ueber einfache TCP-Befehle.
-    Jeder Aufruf blockiert bis der Roboter 'OK' antwortet.
+    Der Controller sendet nur noch das feste O-Protokoll.
     """
 
     def __init__(self, socket_client: DoosanSocket):
         self.client = socket_client
+        self.pick_counter = 1
+
+    def reset_counters(self):
+        """Setzt den Stein-Zaehler fuer O wieder auf 1 zurueck."""
+        self.pick_counter = 1
+        print("[Robot] Stein-Zaehler zurueckgesetzt (O=1)")
 
     # ------------------------------------------------------------------
     # Einzelbefehle
     # ------------------------------------------------------------------
-    def pick(self, stone_type: str) -> bool:
+    def pick(self) -> bool:
         """
-        Greift einen Stein aus dem Lager.
-        Roboter bleibt danach mit Stein in Anflughoehe – PLACE folgt direkt.
-        stone_type: "X" oder "O"
+        Greift einen O-Stein aus dem Lager.
+        Der Zaehler wird nach jedem erfolgreichen Versand erhoeht.
         """
-        cmd = f"PICK {stone_type.upper()}"
+        cmd = f"PICK O {self.pick_counter}"
         print(f"[Robot] {cmd}")
+
+        if self.pick_counter < 5:
+            self.pick_counter += 1
+
         return self.client.send_command(cmd)
 
     def place(self, field_id: int) -> bool:
-        """
-        Legt den gegriffenen Stein auf Feld 1–9 ab.
-        Roboter faehrt danach selbst zu HOME (im DRL).
-        """
+        """Legt den gegriffenen Stein auf Feld 1-9 ab."""
         if field_id < 1 or field_id > 9:
             print(f"[Robot] Ungueltige Feldnummer: {field_id}")
             return False
@@ -47,19 +57,13 @@ class RobotController:
         return self.client.send_command(cmd)
 
     def push_reward(self) -> bool:
-        """
-        Schiebt das Belohnungs-Objekt.
-        Roboter faehrt danach selbst zu HOME (im DRL).
-        """
+        """Schiebt das Belohnungs-Objekt."""
         cmd = "PUSH"
         print(f"[Robot] {cmd}")
         return self.client.send_command(cmd)
 
     def go_home(self) -> bool:
-        """
-        Faehrt den Roboter zu GLOBAL_HOME.
-        Wird bei Reset und neuer Runde aufgerufen.
-        """
+        """Faehrt den Roboter zu GLOBAL_HOME."""
         cmd = "HOME"
         print(f"[Robot] {cmd}")
         return self.client.send_command(cmd)
@@ -67,19 +71,20 @@ class RobotController:
     # ------------------------------------------------------------------
     # Vollstaendiger Spielzug
     # ------------------------------------------------------------------
-    def do_move(self, field_id: int, stone_type: str) -> bool:
+    def do_move(self, field_id: int) -> bool:
         """
         Fuehrt einen kompletten Zug aus:
-          1. PICK <stone_type>  – Stein aus Lager greifen
-          2. PLACE <field_id>  – Stein auf Feld ablegen + HOME
+          1. PICK O <index>
+          2. PLACE <field_id>
 
-        Wichtig: Das DRL sendet nach PICK sofort OK (Roboter haelt Stein).
-                 Erst nach PLACE + HOME kommt das zweite OK.
+        Wichtig:
+          - Das DRL sendet nach PICK sofort OK.
+          - Erst nach PLACE + HOME kommt das zweite OK.
         """
-        print(f"[Robot] do_move: Feld={field_id}, Stein={stone_type}")
+        print(f"[Robot] do_move: Feld={field_id}, Stein=O")
 
-        if not self.pick(stone_type):
-            print(f"[Robot] PICK fehlgeschlagen (Stein={stone_type})")
+        if not self.pick():
+            print("[Robot] PICK fehlgeschlagen (Stein=O)")
             return False
 
         if not self.place(field_id):

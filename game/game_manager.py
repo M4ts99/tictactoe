@@ -3,23 +3,28 @@
 # =============================================================================
 from game.board import Board
 from game.ai import easy, medium, hard
-from config import (AI_DIFFICULTY_EASY, AI_DIFFICULTY_MEDIUM,
-                    AI_DIFFICULTY_HARD, DEFAULT_DIFFICULTY)
+from config import (
+    AI_DIFFICULTY_EASY,
+    AI_DIFFICULTY_MEDIUM,
+    AI_DIFFICULTY_HARD,
+    DEFAULT_DIFFICULTY,
+)
 
 
 class GameManager:
     """
     Steuert den Spielablauf.
-    - human_player: 'X' oder 'O'
-    - ai_player:    das jeweils andere Symbol
-    - difficulty:   'easy', 'medium', 'hard'
+
+    Neue feste Logik:
+      - Mensch = X
+      - Roboter/KI = O
     """
 
     def __init__(self, human_player: str = "X",
                  difficulty: str = DEFAULT_DIFFICULTY):
         self.board = Board()
-        self.human_player = human_player
-        self.ai_player = "O" if human_player == "X" else "X"
+        self.human_player = "X"
+        self.ai_player = "O"
         self.difficulty = difficulty
         self.current_turn = "X"
         self.state = "running"   # 'running' | 'human_won' | 'ai_won' | 'draw'
@@ -58,14 +63,14 @@ class GameManager:
         return self.state == "running" and self.current_turn == self.ai_player
 
     def reset(self, start_player: str = "X"):
+        """Startet eine neue Runde (Scores bleiben erhalten)."""
         self.board.reset()
-        self.current_turn = start_player   # ← flexibel
+        self.current_turn = start_player
         self.state = "running"
-
 
     def full_reset(self):
         """Vollstaendiger Reset inkl. Scores."""
-        self.reset()
+        self.reset(start_player="X")
         self.scores = {"human": 0, "ai": 0, "draw": 0}
 
     def set_difficulty(self, difficulty: str):
@@ -79,8 +84,8 @@ class GameManager:
         if self.state == "draw":
             return "Unentschieden!"
         if self.is_human_turn():
-            return f"Dein Zug ({self.human_player})"
-        return f"Roboter denkt... ({self.ai_player})"
+            return "Dein Zug (X)"
+        return "Roboter denkt... (O)"
 
     # ------------------------------------------------------------------
     # Intern
@@ -97,9 +102,9 @@ class GameManager:
             self.state = "draw"
             self.scores["draw"] += 1
         else:
-            self.current_turn = (self.ai_player
-                                 if self.current_turn == self.human_player
-                                 else self.human_player)
+            self.current_turn = (
+                self.ai_player if self.current_turn == self.human_player else self.human_player
+            )
 
     def _get_ai_move(self) -> int:
         if self.difficulty == AI_DIFFICULTY_EASY:

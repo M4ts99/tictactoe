@@ -1,11 +1,15 @@
 # =============================================================================
 # main_v2.py – Hauptprogramm TicTacToe Doosan M1013
 #
+# Regeln (hardcoded):
+#   - Mensch  = immer X
+#   - Roboter = immer O
+#
 # Architektur:
-#   - Startscreen:    Auswahl Dummy / Echter Roboter + IP-Eingabe
-#   - Vision-Thread:  Kamera lesen + YOLO inferenz (laeuft separat)
-#   - Pygame-Thread:  UI zeichnen + Events (Hauptthread)
-#   - Shared State:   frame + detections via threading.Lock
+#   - Startscreen:   Auswahl Dummy / Echter Roboter + IP-Eingabe
+#   - Vision-Thread: Kamera lesen + YOLO-Inferenz (separater Thread)
+#   - Pygame-Thread: UI zeichnen + Events (Hauptthread)
+#   - Shared State:  frame + detections via threading.Lock
 # =============================================================================
 from __future__ import annotations
 
@@ -35,7 +39,7 @@ from robot.robot_controller import RobotController
 
 try:
     from vision.camera import Camera
-    from vision.yolo_detector import YoloDetector, Detection
+    from vision.yolo_detector import YoloDetector
     from vision.board_mapper import BoardMapper
     VISION_AVAILABLE = True
 except Exception as _e:
@@ -43,7 +47,13 @@ except Exception as _e:
     VISION_AVAILABLE = False
 
 # =============================================================================
-# Layout-Konstanten
+# Spieler-Konstanten (fest verdrahtet)
+# =============================================================================
+HUMAN_MARK = "X"
+ROBOT_MARK = "O"
+
+# =============================================================================
+# Layout
 # =============================================================================
 WIN_W, WIN_H = 1500, 860
 
@@ -57,9 +67,9 @@ CELL             = BOARD_SIZE // 3
 RIGHT_X = 835
 RIGHT_W = WIN_W - RIGHT_X - 10
 
-BOARD_RECT = (340, 60, 940, 660)
+BOARD_RECT = (340, 60, 940, 660)   # Kamerabild-Ausschnitt fuer den Board-Mapper
 
-CONFIRMATION_SECONDS = 2.0
+CONFIRMATION_SECONDS = 2.0   # Sekunden bis ein erkannter X-Stein bestaetigt wird
 LOG_TTL_SECONDS      = 15.0
 MAX_LOG_VISIBLE      = 10
 
@@ -69,20 +79,30 @@ DUMMY_PORT = 12345
 # =============================================================================
 # Farben
 # =============================================================================
-BG      = (18,  18,  30)
-PANEL   = (26,  26,  40)
-PANEL2  = (32,  32,  50)
-LINE    = (80,  80, 120)
-TEXT    = (235, 235, 240)
-DIM     = (130, 130, 155)
-X_COL   = (220,  80,  80)
-O_COL   = (80,  180, 220)
-GOLD    = (255, 215,   0)
-GREEN   = (80,  210, 110)
-RED     = (235,  80,  80)
-YELLOW  = (240, 200,  70)
-BLUE    = (100, 155, 255)
-DARK    = (12,  12,  22)
+BG     = (18,  18,  30)
+PANEL  = (26,  26,  40)
+PANEL2 = (32,  32,  50)
+LINE   = (80,  80, 120)
+TEXT   = (235, 235, 240)
+DIM    = (130, 130, 155)
+X_COL  = (220,  80,  80)
+O_COL  = (80,  180, 220)
+GOLD   = (255, 215,   0)
+GREEN  = (80,  210, 110)
+RED    = (235,  80,  80)
+YELLOW = (240, 200,  70)
+BLUE   = (100, 155, 255)
+DARK   = (12,  12,  22)
+
+# =============================================================================
+# Feld-Zuordnung fuer die 2D-Ansicht
+# (row=0 oben, row=2 unten | col=0 links, col=2 rechts)
+# =============================================================================
+FIELD_MAP = {
+    1: (2, 2), 2: (2, 1), 3: (2, 0),
+    4: (1, 2), 5: (1, 1), 6: (1, 0),
+    7: (0, 2), 8: (0, 1), 9: (0, 0),
+}
 
 
 # =============================================================================
@@ -92,7 +112,7 @@ DARK    = (12,  12,  22)
 class LogEntry:
     text: str
     ts:   float
-    kind: str = "info"
+    kind: str = "info"   # info | ok | error | robot | human | warn
 
 
 @dataclass
@@ -116,30 +136,10 @@ def draw_text(surface, text, font, color, x, y, anchor="topleft"):
             (x, y))
     surface.blit(surf, rect)
     return rect
-def reset_round(self):
-    self._abort_robot_turn()
-    # ↓ NEU: Roboter zu HOME schicken (im Hintergrund, nicht blockierend)
-    if self.robot_connected:
-        threading.Thread(
-            target=self.robot_controller.go_home,
-            daemon=True
-        ).start()
-        self.log("Roboter faehrt HOME (Reset)", "robot")
-    # ... Rest bleibt gleich
-
-def full_reset(self):
-    self._abort_robot_turn()
-    # ↓ NEU: Roboter zu HOME schicken (im Hintergrund, nicht blockierend)
-    if self.robot_connected:
-        threading.Thread(
-            target=self.robot_controller.go_home,
-            daemon=True
-        ).start()
-        self.log("Roboter faehrt HOME (Full Reset)", "robot")
-    # ... Rest bleibt gleich
 
 
-def draw_button(surface, rect, text, font, active=False, mouse_pos=(0, 0),
+def draw_button(surface, rect, text, font,
+                active=False, mouse_pos=(0, 0),
                 bg_col=None, border_col=None):
     r = pygame.Rect(rect)
     if bg_col:
@@ -158,21 +158,25 @@ def draw_button(surface, rect, text, font, active=False, mouse_pos=(0, 0),
 
 
 def field_from_mouse(mx, my):
+    """Gibt Feld-ID (1-9) zurueck wenn die Maus auf dem 2D-Brett ist."""
     bx = mx - BOARD_X
     by = my - BOARD_Y
     if not (0 <= bx < BOARD_SIZE and 0 <= by < BOARD_SIZE):
         return None
     col = int(bx // CELL)
     row = int(by // CELL)
-    fid = row * 3 + col + 1
-    return fid if 1 <= fid <= 9 else None
+    for fid, (r, c) in FIELD_MAP.items():
+        if r == row and c == col:
+            return fid
+    return None
 
 
 def frame_to_surface(frame: np.ndarray, w: int, h: int) -> pygame.Surface:
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    frame_rgb = cv2.resize(frame_rgb, (w, h), interpolation=cv2.INTER_LINEAR)
-    frame_rgb = cv2.flip(frame_rgb, 1)
-    return pygame.surfarray.make_surface(np.rot90(frame_rgb))
+    """Konvertiert OpenCV BGR-Frame → Pygame Surface."""
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    rgb = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_LINEAR)
+    rgb = cv2.flip(rgb, 0)
+    return pygame.surfarray.make_surface(np.rot90(rgb))
 
 
 # =============================================================================
@@ -180,7 +184,7 @@ def frame_to_surface(frame: np.ndarray, w: int, h: int) -> pygame.Surface:
 # =============================================================================
 def vision_thread_fn(vs: VisionState):
     if not VISION_AVAILABLE:
-        print("[Vision] Module nicht verfuegbar.")
+        print("[Vision] Module nicht verfuegbar – Thread beendet.")
         return
 
     camera   = Camera()
@@ -208,8 +212,10 @@ def vision_thread_fn(vs: VisionState):
         annotated  = mapper.draw_grid(frame)
         annotated  = detector.draw_detections(annotated, detections)
 
-        det_with_fields = [(det, mapper.get_field(det.center_x, det.center_y))
-                           for det in detections]
+        det_with_fields = [
+            (det, mapper.get_field(det.center_x, det.center_y))
+            for det in detections
+        ]
 
         with vs.lock:
             vs.frame      = annotated
@@ -226,27 +232,25 @@ def vision_thread_fn(vs: VisionState):
 # =============================================================================
 class StartScreen:
     """
-    Zeigt beim Programmstart einen Screen:
-      - Dummy-Roboter (lokal, sofort)
-      - Echter Roboter (IP-Eingabe, dann Verbindungsversuch)
-    Gibt (socket_client, robot_controller, mode_label) zurueck.
+    Erster Bildschirm beim Programmstart.
+    Auswahl: Dummy-Roboter (lokal) oder Echter Roboter (IP-Eingabe).
+    Gibt (DoosanSocket, RobotController, label) zurueck.
     """
 
     def __init__(self, screen: pygame.Surface, fonts: dict):
-        self.screen = screen
-        self.fonts  = fonts
-        self.mode   = None          # "dummy" | "real"
-        self.ip_text = ROBOT_IP     # Startwert aus config
-        self.ip_active = False
+        self.screen      = screen
+        self.fonts       = fonts
+        self.mode        = None        # "dummy" | "real"
+        self.ip_text     = ROBOT_IP
+        self.ip_active   = False
         self.status_text = ""
         self.status_col  = DIM
         self.connecting  = False
         self.done        = False
-        self.result: tuple | None = None   # (DoosanSocket, RobotController, str)
+        self.result: tuple | None = None
         self._btn: dict[str, pygame.Rect] = {}
 
     def run(self) -> tuple:
-        """Blockiert bis der Nutzer eine Verbindung gewählt und bestätigt hat."""
         clock = pygame.time.Clock()
         while not self.done:
             mouse = pygame.mouse.get_pos()
@@ -255,11 +259,9 @@ class StartScreen:
                     pygame.quit()
                     raise SystemExit
                 self._handle_event(event, mouse)
-
             self._draw(mouse)
             pygame.display.flip()
             clock.tick(60)
-
         return self.result
 
     def _handle_event(self, event, mouse):
@@ -268,22 +270,18 @@ class StartScreen:
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             pos = event.pos
-
             if self._btn.get("dummy") and self._btn["dummy"].collidepoint(pos):
-                self.mode      = "dummy"
-                self.ip_active = False
+                self.mode        = "dummy"
+                self.ip_active   = False
                 self.status_text = "Dummy-Modus gewaehlt"
                 self.status_col  = YELLOW
-
             elif self._btn.get("real") and self._btn["real"].collidepoint(pos):
-                self.mode      = "real"
-                self.ip_active = True
+                self.mode        = "real"
+                self.ip_active   = True
                 self.status_text = "IP eingeben und Verbinden druecken"
                 self.status_col  = YELLOW
-
             elif self._btn.get("ip_box") and self._btn["ip_box"].collidepoint(pos):
                 self.ip_active = (self.mode == "real")
-
             elif self._btn.get("connect") and self._btn["connect"].collidepoint(pos):
                 self._do_connect()
 
@@ -315,107 +313,96 @@ class StartScreen:
         self.status_text = f"Verbinde mit {ip}:{port} ..."
         self.status_col  = YELLOW
 
-        def _connect_thread():
+        def _thread():
             client = DoosanSocket(ip=ip, port=port, timeout=5)
             ok     = client.connect()
             if ok:
                 controller       = RobotController(client)
-                label            = "Dummy-Roboter" if self.mode == "dummy" else f"Roboter ({ip})"
+                label            = ("Dummy-Roboter" if self.mode == "dummy"
+                                    else f"Roboter ({ip})")
                 self.result      = (client, controller, label)
                 self.status_text = f"Verbunden mit {ip}:{port}"
                 self.status_col  = GREEN
                 self.done        = True
             else:
                 self.status_text = f"Verbindung zu {ip}:{port} fehlgeschlagen!"
-                self.status_col  = RED
                 if self.mode == "dummy":
-                    self.status_text += "  (Dummy-Server gestartet?)"
+                    self.status_text += "  (dummy_robot.py gestartet?)"
+                self.status_col = RED
             self.connecting = False
 
-        threading.Thread(target=_connect_thread, daemon=True).start()
+        threading.Thread(target=_thread, daemon=True).start()
 
     def _draw(self, mouse):
         self.screen.fill(DARK)
-
         cx = WIN_W // 2
+
         draw_text(self.screen, "TicTacToe – Doosan M1013",
                   self.fonts["title"], TEXT, cx, 80, "center")
-        draw_text(self.screen, "Roboter-Verbindung einrichten",
-                  self.fonts["head"], DIM, cx, 130, "center")
+        draw_text(self.screen, "Mensch = X   |   Roboter = O",
+                  self.fonts["head"], DIM, cx, 135, "center")
+        pygame.draw.line(self.screen, LINE, (cx - 320, 170), (cx + 320, 170), 1)
 
-        pygame.draw.line(self.screen, LINE, (cx - 300, 165), (cx + 300, 165), 1)
-
-        # Modus-Buttons
-        draw_text(self.screen, "Verbindungstyp:", self.fonts["body"], DIM, cx - 300, 200)
+        draw_text(self.screen, "Verbindungstyp:", self.fonts["body"], DIM, cx - 320, 200)
         self._btn["dummy"] = draw_button(
-            self.screen, pygame.Rect(cx - 300, 235, 220, 56),
+            self.screen, pygame.Rect(cx - 320, 235, 230, 56),
             "Dummy-Roboter (lokal)", self.fonts["body"],
             active=(self.mode == "dummy"), mouse_pos=mouse,
             border_col=(GREEN if self.mode == "dummy" else LINE))
         self._btn["real"] = draw_button(
-            self.screen, pygame.Rect(cx - 60, 235, 220, 56),
+            self.screen, pygame.Rect(cx - 70, 235, 230, 56),
             "Echter Roboter (IP)", self.fonts["body"],
             active=(self.mode == "real"), mouse_pos=mouse,
             border_col=(BLUE if self.mode == "real" else LINE))
 
-        # Info-Texte
-        draw_text(self.screen,
-                  "Startet einen lokalen Dummy-Server (dummy_robot.py muss laufen)",
-                  self.fonts["small"], DIM, cx - 300, 305)
-        draw_text(self.screen,
-                  "Verbindet direkt mit dem echten Doosan M1013 ueber TCP",
-                  self.fonts["small"], DIM, cx - 60, 305)
+        draw_text(self.screen, "dummy_robot.py muss laufen",
+                  self.fonts["small"], DIM, cx - 320, 302)
+        draw_text(self.screen, "Verbindet direkt mit dem Doosan M1013",
+                  self.fonts["small"], DIM, cx - 70, 302)
 
-        pygame.draw.line(self.screen, LINE, (cx - 300, 335), (cx + 300, 335), 1)
+        pygame.draw.line(self.screen, LINE, (cx - 320, 330), (cx + 320, 330), 1)
 
-        # IP-Eingabe
+        ip_label_col = TEXT if self.mode == "real" else DIM
         draw_text(self.screen, "IP-Adresse des Roboters:",
-                  self.fonts["body"], DIM if self.mode != "real" else TEXT,
-                  cx - 300, 360)
+                  self.fonts["body"], ip_label_col, cx - 320, 355)
 
-        ip_col = (55, 55, 90) if self.mode != "real" else (40, 60, 100)
-        ip_rect = pygame.Rect(cx - 300, 395, 380, 50)
+        ip_rect = pygame.Rect(cx - 320, 390, 390, 50)
         self._btn["ip_box"] = ip_rect
-        pygame.draw.rect(self.screen, ip_col, ip_rect, border_radius=8)
-        border = BLUE if self.ip_active else LINE
-        pygame.draw.rect(self.screen, border, ip_rect, 2, border_radius=8)
-
+        ip_bg = (40, 60, 100) if self.mode == "real" else (35, 35, 55)
+        pygame.draw.rect(self.screen, ip_bg, ip_rect, border_radius=8)
+        pygame.draw.rect(self.screen, BLUE if self.ip_active else LINE,
+                         ip_rect, 2, border_radius=8)
         ip_display = self.ip_text if self.mode == "real" else DUMMY_IP
         draw_text(self.screen, ip_display, self.fonts["body"],
                   TEXT if self.mode == "real" else DIM,
                   ip_rect.left + 12, ip_rect.centery, "midleft")
-
         if self.ip_active and int(time.time() * 2) % 2 == 0:
-            cursor_x = ip_rect.left + 12 + self.fonts["body"].size(self.ip_text)[0] + 2
+            cx_cur = ip_rect.left + 12 + self.fonts["body"].size(self.ip_text)[0] + 2
             pygame.draw.line(self.screen, TEXT,
-                             (cursor_x, ip_rect.top + 10),
-                             (cursor_x, ip_rect.bottom - 10), 2)
+                             (cx_cur, ip_rect.top + 10),
+                             (cx_cur, ip_rect.bottom - 10), 2)
 
         draw_text(self.screen, f"Port: {ROBOT_PORT}",
-                  self.fonts["small"], DIM, cx - 300, 455)
+                  self.fonts["small"], DIM, cx - 320, 450)
 
-        # Verbinden-Button
-        connecting_now = self.connecting
-        btn_col  = (30, 30, 50) if connecting_now else None
-        btn_text = "Verbinde..." if connecting_now else "Verbinden & Starten"
+        btn_text = "Verbinde..." if self.connecting else "Verbinden & Starten"
+        btn_bg   = (30, 30, 50) if self.connecting else None
         self._btn["connect"] = draw_button(
-            self.screen, pygame.Rect(cx - 300, 490, 580, 58),
+            self.screen, pygame.Rect(cx - 320, 485, 600, 58),
             btn_text, self.fonts["head"],
-            bg_col=btn_col, mouse_pos=mouse,
-            border_col=(GOLD if not connecting_now else DIM))
+            bg_col=btn_bg, mouse_pos=mouse,
+            border_col=(DIM if self.connecting else GOLD))
 
-        # Status
         draw_text(self.screen, self.status_text,
-                  self.fonts["body"], self.status_col, cx, 570, "center")
+                  self.fonts["body"], self.status_col, cx, 565, "center")
 
-        # Hinweis
-        pygame.draw.line(self.screen, LINE, (cx - 300, 610), (cx + 300, 610), 1)
+        pygame.draw.line(self.screen, LINE, (cx - 320, 600), (cx + 320, 600), 1)
         draw_text(self.screen,
                   "Tipp: Starte zuerst dummy_robot.py in einem separaten Terminal,",
-                  self.fonts["small"], DIM, cx, 630, "center")
+                  self.fonts["small"], DIM, cx, 620, "center")
         draw_text(self.screen,
                   "dann waehle Dummy-Roboter und klicke Verbinden.",
-                  self.fonts["small"], DIM, cx, 650, "center")
+                  self.fonts["small"], DIM, cx, 640, "center")
 
 
 # =============================================================================
@@ -423,7 +410,7 @@ class StartScreen:
 # =============================================================================
 class MainApp:
 
-    PHASE_SELECT_MARK     = "SELECT_MARK"
+    # Phasen des Spielablaufs
     PHASE_SELECT_STARTER  = "SELECT_STARTER"
     PHASE_PLAYING         = "PLAYING"
     PHASE_ROBOT_THINKING  = "ROBOT_THINKING"
@@ -438,36 +425,43 @@ class MainApp:
         self.screen = pygame.display.get_surface()
         self.clock  = pygame.time.Clock()
 
+        # Fonts
         self.f_title = pygame.font.SysFont("segoeui", 32, bold=True)
         self.f_head  = pygame.font.SysFont("segoeui", 24, bold=True)
         self.f_body  = pygame.font.SysFont("segoeui", 20)
         self.f_small = pygame.font.SysFont("segoeui", 17)
         self.f_tiny  = pygame.font.SysFont("segoeui", 14)
 
-        self.socket_client      = socket_client
-        self.robot_controller   = robot_controller
-        self.connection_label   = connection_label
-        self.robot_connected    = socket_client.is_connected()
+        # Roboter
+        self.socket_client    = socket_client
+        self.robot_controller = robot_controller
+        self.connection_label = connection_label
+        self.robot_connected  = socket_client.is_connected()
 
-        self.game          = GameManager(human_player="X", difficulty=DEFAULT_DIFFICULTY)
-        self.phase         = self.PHASE_SELECT_MARK
-        self.selected_mark = None
-        self.human_side    = None
-        self.robot_side    = None
-        self.starter       = None
+        # Spiel – Rollen fest: Mensch=X, Roboter=O
+        self.game    = GameManager(human_player=HUMAN_MARK,
+                                   difficulty=DEFAULT_DIFFICULTY)
+        self.starter = None   # "human" | "robot" | "random"  – vom Nutzer gewaehlt
+        self.phase   = self.PHASE_SELECT_STARTER
 
+        # Roboter-Zug-Steuerung
         self.ai_thinking       = False
         self.ai_pending        = False
         self.ai_started_at     = 0.0
         self.robot_move_field  = None
         self._robot_reset_flag = False
 
+        # Kamera-Bestaetigungslogik
         self.marker_first_seen: dict[int, float] = {}
         self.confirmed_fields:  set[int]         = set()
 
+        # Log
         self.logs: list[LogEntry] = []
+
+        # Button-Rects (werden pro Frame neu gesetzt)
         self._btn_rects: dict[str, pygame.Rect] = {}
 
+        # Vision
         self.vs = VisionState()
         self._vision_thread: threading.Thread | None = None
 
@@ -499,65 +493,95 @@ class MainApp:
             self._vision_thread.join(timeout=3.0)
 
     # ------------------------------------------------------------------
-    # Spielsteuerung
+    # Startspieler-Auswahl
     # ------------------------------------------------------------------
-    def choose_mark(self, mark: str):
-        self.selected_mark = mark
-        self.human_side    = mark
-        self.robot_side    = "O" if mark == "X" else "X"
-        if self.starter:
-            self._start_new_round_with_current_settings()
-        else:
-            self.game = GameManager(human_player=mark, difficulty=self.game.difficulty)
-            self._reset_vision_state()
-            self.log(f"Du spielst {mark}", "ok")
-            self.phase = self.PHASE_SELECT_STARTER
-
     def choose_starter(self, starter: str):
+        """Wird aufgerufen wenn der Nutzer einen Startspieler-Button drueckt."""
+        self.starter = starter
+        resolved = (random.choice(["human", "robot"])
+                    if starter == "random" else starter)
         if starter == "random":
-            resolved = random.choice(["human", "robot"])
             self.log(f"Zufall → {resolved} beginnt", "info")
-            self.starter = starter
-            self._apply_starter(resolved)
-        else:
-            self.starter = starter
-            self._apply_starter(starter)
+        self._begin_round(resolved)
 
-    def _apply_starter(self, starter: str):
+    def _begin_round(self, starter: str):
+        """Startet eine Runde mit dem angegebenen Startspieler."""
         self._abort_robot_turn()
-        start_mark = self.human_side if starter == "human" else self.robot_side
+        start_mark = HUMAN_MARK if starter == "human" else ROBOT_MARK
         self.game.reset(start_player=start_mark)
         self._reset_vision_state()
-        self.log(f"Startspieler: {starter}", "ok")
+        self.robot_controller.reset_counters()
+        self.log(f"Neue Runde – {starter} beginnt", "ok")
+
         if starter == "robot":
             self.phase = self.PHASE_ROBOT_THINKING
             self._trigger_robot_turn()
         else:
             self.phase = self.PHASE_PLAYING
 
-    def _start_new_round_with_current_settings(self):
-        if not self.selected_mark or not self.starter:
-            self.phase = self.PHASE_SELECT_STARTER if self.selected_mark else self.PHASE_SELECT_MARK
-            return
+    # ------------------------------------------------------------------
+    # Runden-Reset
+    # ------------------------------------------------------------------
+    def reset_round(self):
+        """
+        Neue Runde mit denselben Einstellungen.
+        Startspieler-Auswahl bleibt erhalten, Runde wird direkt neu gestartet.
+        """
         self._abort_robot_turn()
-        self.game = GameManager(human_player=self.human_side, difficulty=self.game.difficulty)
+        self._send_home_async()
+
+        if self.starter is None:
+            self.phase = self.PHASE_SELECT_STARTER
+            self.log("Bitte erst Startspieler waehlen", "warn")
+            return
+
         resolved = (random.choice(["human", "robot"])
                     if self.starter == "random" else self.starter)
         if self.starter == "random":
             self.log(f"Zufall → {resolved} beginnt", "info")
-        self._apply_starter(resolved)
+        self._begin_round(resolved)
 
+    def full_reset(self):
+        """
+        Vollstaendiger Reset:
+        Alle Einstellungen zurueck, Startspieler muss neu gewaehlt werden.
+        """
+        self._abort_robot_turn()
+        self._send_home_async()
+
+        self.game.full_reset()
+        self._reset_vision_state()
+        self.robot_controller.reset_counters()
+        self.starter = None
+        self.phase   = self.PHASE_SELECT_STARTER
+        self.log("Alles zurueckgesetzt", "info")
+
+    # ------------------------------------------------------------------
+    # Hilfsmethoden
+    # ------------------------------------------------------------------
     def _reset_vision_state(self):
         self.marker_first_seen.clear()
         self.confirmed_fields.clear()
 
+    def _send_home_async(self):
+        """Schickt den Roboter zu HOME (nicht-blockierend)."""
+        if self.robot_connected:
+            threading.Thread(
+                target=self.robot_controller.go_home,
+                daemon=True).start()
+            self.log("Roboter faehrt HOME", "robot")
+
     def _abort_robot_turn(self):
+        """Bricht einen laufenden Roboter-Zug ab (nur Python-Seite)."""
         if self.ai_thinking:
             self._robot_reset_flag = True
         self.ai_thinking      = False
         self.ai_pending       = False
         self.robot_move_field = None
 
+    # ------------------------------------------------------------------
+    # Roboter-Zug-Logik
+    # ------------------------------------------------------------------
     def _trigger_robot_turn(self):
         if self.ai_thinking:
             return
@@ -568,136 +592,117 @@ class MainApp:
         self.log("Roboter denkt...", "robot")
 
     def _process_robot_turn(self):
+        """Wird jeden Frame aufgerufen wenn phase == ROBOT_THINKING."""
         if not self.ai_pending:
             return
         if time.time() - self.ai_started_at < 0.8:
             return
+
         self.ai_pending = False
+
         if self._robot_reset_flag:
             self._robot_reset_flag = False
             self.ai_thinking       = False
             return
+
         move = self.game._get_ai_move()
         if move is None:
             self.ai_thinking = False
             self.phase = self.PHASE_GAME_OVER
             return
+
         self.robot_move_field = move
         self.phase = self.PHASE_ROBOT_MOVING
-        self.log(f"Zug berechnet: Feld {move}", "robot")
-        threading.Thread(target=self._execute_robot_move,
-                         args=(move, self.robot_side),
-                         daemon=True).start()
+        self.log(f"KI waehlt Feld {move}", "robot")
 
-    def _robot_error_recovery(self, reason: str):
-        """
-        Automatische Fehler-Recovery:
-        1. HOME-Befehl an Roboter senden
-        2. Runde auf dem PC automatisch neu starten
-        """
-        self.log(f"Fehler: {reason} – starte Recovery", "error")
+        threading.Thread(
+            target=self._execute_robot_move,
+            args=(move,),
+            daemon=True).start()
 
-        # Roboter-Zustand sofort zuruecksetzen
-        self.ai_thinking      = False
-        self.ai_pending       = False
-        self.robot_move_field = None
-
-        # HOME senden (blockierend, im selben Hintergrund-Thread)
-        if self.robot_connected:
-            self.log("Sende HOME (Recovery)...", "robot")
-            ok = self.robot_controller.go_home()
-            if ok:
-                self.log("Roboter zurueck in HOME", "ok")
-            else:
-                self.log("HOME fehlgeschlagen – Roboter manuell pruefen!", "error")
-
-        # Runde automatisch neu starten
-        self.log("Runde wird automatisch neu gestartet", "info")
-        self.reset_round()
-
-
-    def _execute_robot_move(self, move: int, robot_side: str):
+    def _execute_robot_move(self, move: int):
+        """Laeuft im Hintergrund-Thread: PICK → PLACE → Spielzustand aktualisieren."""
         if self._robot_reset_flag:
-            self._robot_reset_flag = False
-            self.ai_thinking       = False
-            self.robot_move_field  = None
+            self._clear_robot_state()
             return
 
-        self.log(f"Sende PICK {robot_side}", "robot")
+        self.log(f"Sende PICK {ROBOT_MARK}", "robot")
+        ok_pick = (self.robot_controller.pick()
 
-        if self.robot_connected:
-            ok_pick = self.robot_controller.pick(robot_side)
-        else:
-            self.log("Kein Roboter – simuliere PICK", "warn")
-            time.sleep(1.0)
-            ok_pick = True
+                   if self.robot_connected
+                   else self._simulate_delay())
 
         if self._robot_reset_flag:
-            self._robot_reset_flag = False
-            self.ai_thinking       = False
-            self.robot_move_field  = None
+            self._clear_robot_state()
             return
 
         if not ok_pick:
-            self._robot_error_recovery(f"PICK {robot_side} Timeout/Fehler")
+            self._robot_error_recovery(f"PICK {ROBOT_MARK} fehlgeschlagen")
             return
 
         self.log(f"PICK OK – sende PLACE {move}", "robot")
-
-        if self.robot_connected:
-            ok_place = self.robot_controller.place(move)
-        else:
-            self.log("Kein Roboter – simuliere PLACE", "warn")
-            time.sleep(1.0)
-            ok_place = True
+        ok_place = (self.robot_controller.place(move)
+                    if self.robot_connected
+                    else self._simulate_delay())
 
         if self._robot_reset_flag:
-            self._robot_reset_flag = False
-            self.ai_thinking       = False
-            self.robot_move_field  = None
+            self._clear_robot_state()
             return
 
         if not ok_place:
-            self._robot_error_recovery(f"PLACE {move} Timeout/Fehler")
+            self._robot_error_recovery(f"PLACE {move} fehlgeschlagen")
             return
 
         if not self.game.board.is_empty(move):
             self.log(f"Feld {move} bereits belegt – Zug verworfen", "warn")
-            self.ai_thinking      = False
-            self.robot_move_field = None
+            self._clear_robot_state()
             self.phase = self.PHASE_PLAYING
             return
 
-        self.game.board.place(move, robot_side)
+        self.game.board.place(move, ROBOT_MARK)
         self.game._after_move()
-        self.log(f"Roboter fertig – Feld {move} gesetzt", "ok")
-        self.ai_thinking      = False
-        self.robot_move_field = None
-        self._check_game_state_after_move()
-
+        self.log(f"Roboter setzt O auf Feld {move}", "ok")
+        self._clear_robot_state()
+        self._check_game_state()
 
     def _execute_reward_move(self):
+        """Laeuft im Hintergrund-Thread: PUSH → GAME_OVER."""
         self.log("Sende PUSH (Belohnung)", "robot")
-        if self.robot_connected:
-            ok = self.robot_controller.push_reward()
-        else:
-            time.sleep(1.0)
-            ok = True
-
+        ok = (self.robot_controller.push_reward()
+              if self.robot_connected
+              else self._simulate_delay(1.0))
         if ok:
             self.log("Belohnung ausgegeben!", "ok")
         else:
-            self.log("PUSH fehlgeschlagen – sende HOME", "error")
-            if self.robot_connected:
-                threading.Thread(
-                    target=self.robot_controller.go_home,
-                    daemon=True
-                ).start()
-
+            self.log("PUSH fehlgeschlagen", "error")
+            self._send_home_async()
         self.phase = self.PHASE_GAME_OVER
 
+    def _robot_error_recovery(self, reason: str):
+        """Bei Fehler: HOME fahren und Runde neu starten."""
+        self.log(f"Fehler: {reason} – Recovery", "error")
+        self._clear_robot_state()
+        if self.robot_connected:
+            self.log("Sende HOME (Recovery)...", "robot")
+            ok = self.robot_controller.go_home()
+            self.log("HOME OK" if ok else "HOME fehlgeschlagen!", "ok" if ok else "error")
+        self.log("Runde wird neu gestartet", "info")
+        self.reset_round()
 
-    def _check_game_state_after_move(self):
+    def _clear_robot_state(self):
+        self._robot_reset_flag = False
+        self.ai_thinking       = False
+        self.robot_move_field  = None
+
+    @staticmethod
+    def _simulate_delay(seconds: float = 1.5) -> bool:
+        time.sleep(seconds)
+        return True
+
+    # ------------------------------------------------------------------
+    # Spielzustand pruefen
+    # ------------------------------------------------------------------
+    def _check_game_state(self):
         if self.game.state == "running":
             if self.game.is_ai_turn():
                 self.phase = self.PHASE_ROBOT_THINKING
@@ -706,11 +711,14 @@ class MainApp:
                 self.phase = self.PHASE_PLAYING
         elif self.game.state in ("human_won", "ai_won"):
             self.phase = self.PHASE_ROBOT_REWARDING
-            self.log("Spiel beendet – starte Belohnungs-Sequenz", "robot")
+            self.log("Spiel beendet – Belohnungs-Sequenz", "robot")
             threading.Thread(target=self._execute_reward_move, daemon=True).start()
         else:
             self.phase = self.PHASE_GAME_OVER
 
+    # ------------------------------------------------------------------
+    # Mensch-Zug (Maus oder Kamera)
+    # ------------------------------------------------------------------
     def human_move(self, fid: int):
         if self.phase != self.PHASE_PLAYING:
             return
@@ -721,87 +729,47 @@ class MainApp:
         if not self.game.board.is_empty(fid):
             return
         self.game.human_move(fid)
-        self.log(f"Mensch setzt auf Feld {fid}", "human")
-        self._check_game_state_after_move()
-
-    def reset_round(self):
-        self._abort_robot_turn()
-        # Roboter zu HOME schicken (im Hintergrund, nicht blockierend)
-        if self.robot_connected:
-            threading.Thread(
-                target=self.robot_controller.go_home,
-                daemon=True
-            ).start()
-            self.log("Roboter faehrt HOME", "robot")
-
-        if not self.selected_mark or not self.starter:
-            self.phase = (self.PHASE_SELECT_STARTER if self.selected_mark
-                          else self.PHASE_SELECT_MARK)
-            self.log("Bitte erst Einstellungen waehlen", "warn")
-            return
-        resolved = (random.choice(["human", "robot"])
-                    if self.starter == "random" else self.starter)
-        if self.starter == "random":
-            self.log(f"Zufall → {resolved} beginnt", "info")
-        start_mark = self.human_side if resolved == "human" else self.robot_side
-        self.game.reset(start_player=start_mark)
-        self._reset_vision_state()
-        self.log("Neue Runde", "info")
-        if start_mark == self.robot_side:
-            self.phase = self.PHASE_ROBOT_THINKING
-            self._trigger_robot_turn()
-        else:
-            self.phase = self.PHASE_PLAYING
-
-    def full_reset(self):
-        self._abort_robot_turn()
-        # Roboter zu HOME schicken (im Hintergrund, nicht blockierend)
-        if self.robot_connected:
-            threading.Thread(
-                target=self.robot_controller.go_home,
-                daemon=True
-            ).start()
-            self.log("Roboter faehrt HOME", "robot")
-
-        self.game.full_reset()
-        self._reset_vision_state()
-        self.selected_mark = None
-        self.human_side    = None
-        self.robot_side    = None
-        self.starter       = None
-        self.phase         = self.PHASE_SELECT_MARK
-        self.log("Alles zurueckgesetzt", "info")
+        self.log(f"Mensch setzt X auf Feld {fid}", "human")
+        self._check_game_state()
 
     # ------------------------------------------------------------------
-    # Kamera-Bestätigung
+    # Kamera-Bestaetigungslogik (nur X-Steine akzeptieren)
     # ------------------------------------------------------------------
     def _update_confirmation(self, det_with_fields: list):
         if self.phase != self.PHASE_PLAYING:
             return
         if not self.game.is_human_turn():
             return
-        now = time.time()
+
+        now         = time.time()
         seen_fields = set()
+
         for det, fid in det_with_fields:
+            # Nur X-Steine zaehlen – O-Steine werden ignoriert
+            if getattr(det, "label", None) != HUMAN_MARK:
+                continue
             if fid is None or fid in self.confirmed_fields:
                 continue
             if not self.game.board.is_empty(fid):
                 continue
+
             seen_fields.add(fid)
             if fid not in self.marker_first_seen:
                 self.marker_first_seen[fid] = now
             elif now - self.marker_first_seen[fid] >= CONFIRMATION_SECONDS:
                 self.confirmed_fields.add(fid)
                 self.marker_first_seen.pop(fid, None)
-                self.log(f"Stein erkannt auf Feld {fid}", "ok")
+                self.log(f"X-Stein bestaetigt auf Feld {fid}", "ok")
                 self.human_move(fid)
                 return
+
+        # Felder aus dem Timer entfernen, die nicht mehr sichtbar sind
         for fid in list(self.marker_first_seen):
             if fid not in seen_fields:
                 self.marker_first_seen.pop(fid, None)
 
     # ------------------------------------------------------------------
-    # Zeichnen
+    # Zeichnen – Kamera-Panel
     # ------------------------------------------------------------------
     def _draw_camera_panel(self):
         with self.vs.lock:
@@ -814,97 +782,119 @@ class MainApp:
         else:
             surf = pygame.Surface((CAM_W, CAM_H))
             surf.fill((18, 18, 28))
-            msg = "Vision-Thread startet..." if VISION_AVAILABLE else "Kein Kamera-Modul"
+            msg = ("Vision-Thread startet..."
+                   if VISION_AVAILABLE else "Kein Kamera-Modul")
             draw_text(surf, msg, self.f_head, DIM, CAM_W // 2, CAM_H // 2, "center")
 
         self.screen.blit(surf, (CAM_X, CAM_Y))
         pygame.draw.rect(self.screen, LINE, (CAM_X, CAM_Y, CAM_W, CAM_H), 2)
 
+        # Bestaetigungs-Fortschrittsbalken
         now = time.time()
         for fid, ts in self.marker_first_seen.items():
             progress = min(1.0, (now - ts) / CONFIRMATION_SECONDS)
             bar_x = CAM_X + 10 + (fid - 1) * 85
             bar_y = CAM_Y + CAM_H - 22
-            pygame.draw.rect(self.screen, (50, 50, 70), (bar_x, bar_y, 75, 14), border_radius=4)
-            pygame.draw.rect(self.screen, GREEN, (bar_x, bar_y, int(75 * progress), 14), border_radius=4)
+            pygame.draw.rect(self.screen, (50, 50, 70),
+                             (bar_x, bar_y, 75, 14), border_radius=4)
+            pygame.draw.rect(self.screen, GREEN,
+                             (bar_x, bar_y, int(75 * progress), 14), border_radius=4)
             draw_text(self.screen, f"F{fid}", self.f_tiny, TEXT, bar_x + 2, bar_y - 14)
 
         return det_fields
 
+    # ------------------------------------------------------------------
+    # Zeichnen – 2D-Brett
+    # ------------------------------------------------------------------
     def _draw_board(self, mouse_pos):
+        # Hintergrund
         pygame.draw.rect(self.screen, PANEL,
-                         (BOARD_X - 15, BOARD_Y - 15, BOARD_SIZE + 30, BOARD_SIZE + 30),
+                         (BOARD_X - 15, BOARD_Y - 15,
+                          BOARD_SIZE + 30, BOARD_SIZE + 30),
                          border_radius=14)
         pygame.draw.rect(self.screen, LINE,
-                         (BOARD_X - 15, BOARD_Y - 15, BOARD_SIZE + 30, BOARD_SIZE + 30),
+                         (BOARD_X - 15, BOARD_Y - 15,
+                          BOARD_SIZE + 30, BOARD_SIZE + 30),
                          2, border_radius=14)
+
+        # Gitterlinien
         for i in range(1, 3):
             x = BOARD_X + i * CELL
             y = BOARD_Y + i * CELL
-            pygame.draw.line(self.screen, LINE, (x, BOARD_Y), (x, BOARD_Y + BOARD_SIZE), 4)
-            pygame.draw.line(self.screen, LINE, (BOARD_X, y), (BOARD_X + BOARD_SIZE, y), 4)
-        pygame.draw.rect(self.screen, LINE, (BOARD_X, BOARD_Y, BOARD_SIZE, BOARD_SIZE), 4)
+            pygame.draw.line(self.screen, LINE,
+                             (x, BOARD_Y), (x, BOARD_Y + BOARD_SIZE), 4)
+            pygame.draw.line(self.screen, LINE,
+                             (BOARD_X, y), (BOARD_X + BOARD_SIZE, y), 4)
+        pygame.draw.rect(self.screen, LINE,
+                         (BOARD_X, BOARD_Y, BOARD_SIZE, BOARD_SIZE), 4)
 
+        # Steine zeichnen
         for fid in range(1, 10):
-            val = self.game.board.get_cell(fid)
-            row = (fid - 1) // 3
-            col = (fid - 1) % 3
-            cx  = BOARD_X + col * CELL + CELL // 2
-            cy  = BOARD_Y + row * CELL + CELL // 2
+            val      = self.game.board.get_cell(fid)
+            row, col = FIELD_MAP[fid]
+            cx       = BOARD_X + col * CELL + CELL // 2
+            cy       = BOARD_Y + row * CELL + CELL // 2
             if val == "X":
                 r = CELL // 2 - 18
-                pygame.draw.line(self.screen, X_COL, (cx - r, cy - r), (cx + r, cy + r), 7)
-                pygame.draw.line(self.screen, X_COL, (cx + r, cy - r), (cx - r, cy + r), 7)
+                pygame.draw.line(self.screen, X_COL,
+                                 (cx - r, cy - r), (cx + r, cy + r), 7)
+                pygame.draw.line(self.screen, X_COL,
+                                 (cx + r, cy - r), (cx - r, cy + r), 7)
             elif val == "O":
-                pygame.draw.circle(self.screen, O_COL, (cx, cy), CELL // 2 - 18, 7)
+                pygame.draw.circle(self.screen, O_COL,
+                                   (cx, cy), CELL // 2 - 18, 7)
 
+        # Gewinner-Linie
         if self.game.board.winning_combo:
-            def center(idx):
-                rr, cc = idx // 3, idx % 3
-                return (BOARD_X + cc * CELL + CELL // 2,
-                        BOARD_Y + rr * CELL + CELL // 2)
+            def _center(idx):
+                r, c = FIELD_MAP[idx]
+                return (BOARD_X + c * CELL + CELL // 2,
+                        BOARD_Y + r * CELL + CELL // 2)
             pygame.draw.line(self.screen, GOLD,
-                             center(self.game.board.winning_combo[0]),
-                             center(self.game.board.winning_combo[2]), 8)
+                             _center(self.game.board.winning_combo[0]),
+                             _center(self.game.board.winning_combo[2]), 8)
 
+        # Hover-Effekt (nur wenn Mensch am Zug)
         if self.phase == self.PHASE_PLAYING and self.game.is_human_turn():
             fid = field_from_mouse(*mouse_pos)
             if fid and self.game.board.is_empty(fid):
-                row = (fid - 1) // 3
-                col = (fid - 1) % 3
+                row, col = FIELD_MAP[fid]
                 s = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
                 s.fill((255, 255, 255, 20))
                 self.screen.blit(s, (BOARD_X + col * CELL, BOARD_Y + row * CELL))
 
+        # Roboter-Ziel-Highlight (blinkt)
         if self.robot_move_field and self.phase == self.PHASE_ROBOT_MOVING:
-            fid = self.robot_move_field
-            row = (fid - 1) // 3
-            col = (fid - 1) % 3
+            fid      = self.robot_move_field
+            row, col = FIELD_MAP[fid]
             if int(time.time() * 2) % 2 == 0:
                 s = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
                 s.fill((80, 180, 220, 40))
                 self.screen.blit(s, (BOARD_X + col * CELL, BOARD_Y + row * CELL))
 
+    # ------------------------------------------------------------------
+    # Zeichnen – Status-Panel (rechts)
+    # ------------------------------------------------------------------
     def _draw_status_panel(self, mouse_pos):
         px = RIGHT_X
         pw = RIGHT_W
 
-        pygame.draw.rect(self.screen, PANEL2, (px, 65, pw, WIN_H - 75), border_radius=14)
-        pygame.draw.rect(self.screen, LINE,   (px, 65, pw, WIN_H - 75), 2, border_radius=14)
+        pygame.draw.rect(self.screen, PANEL2,
+                         (px, 65, pw, WIN_H - 75), border_radius=14)
+        pygame.draw.rect(self.screen, LINE,
+                         (px, 65, pw, WIN_H - 75), 2, border_radius=14)
 
         y = 85
 
-        # Status-Text
-        if self.phase == self.PHASE_SELECT_MARK:
-            stxt, scol = "Waehle deine Rolle", YELLOW
-        elif self.phase == self.PHASE_SELECT_STARTER:
+        # --- Haupt-Status-Text ---
+        if self.phase == self.PHASE_SELECT_STARTER:
             stxt, scol = "Wer faengt an?", YELLOW
         elif self.phase == self.PHASE_ROBOT_THINKING:
             stxt, scol = "Roboter denkt...", BLUE
         elif self.phase == self.PHASE_ROBOT_MOVING:
             stxt, scol = "Roboter faehrt...", BLUE
         elif self.phase == self.PHASE_ROBOT_REWARDING:
-            stxt, scol = "Belohnung wird ausgegeben...", GOLD
+            stxt, scol = "Belohnung laeuft...", GOLD
         elif self.game.state == "human_won":
             stxt, scol = "Du hast gewonnen!", GOLD
         elif self.game.state == "ai_won":
@@ -916,93 +906,87 @@ class MainApp:
         else:
             stxt, scol = "Roboter am Zug", O_COL
 
-        draw_text(self.screen, stxt, self.f_title, scol, px + pw // 2, y + 20, "center")
+        draw_text(self.screen, stxt, self.f_title, scol,
+                  px + pw // 2, y + 20, "center")
         y += 55
 
-        # Verbindungsinfo
+        # --- Verbindungsstatus ---
         conn_col = GREEN if self.robot_connected else RED
         conn_txt = f"● {self.connection_label}" if self.robot_connected else "● Offline"
-        draw_text(self.screen, conn_txt, self.f_tiny, conn_col, px + pw // 2, y, "center")
-        y += 25
+        draw_text(self.screen, conn_txt, self.f_tiny, conn_col,
+                  px + pw // 2, y, "center")
+        y += 22
 
-        hmark = self.selected_mark or "–"
-        rmark = self.robot_side    or "–"
-        draw_text(self.screen, f"Du: {hmark}   Roboter: {rmark}",
-                  self.f_body, DIM, px + 20, y)
-        y += 32
+        # --- Rollen-Info (fest) ---
+        draw_text(self.screen, "Mensch: X     Roboter: O",
+                  self.f_body, DIM, px + pw // 2, y, "center")
+        y += 30
 
+        # --- Punkte ---
         draw_text(self.screen, f"Du: {self.game.scores['human']}",
                   self.f_body, X_COL, px + 20, y)
         draw_text(self.screen, f"Roboter: {self.game.scores['ai']}",
                   self.f_body, O_COL, px + 180, y)
         draw_text(self.screen, f"Remis: {self.game.scores['draw']}",
-                  self.f_body, DIM, px + 340, y)
-        y += 42
+                  self.f_body, DIM, px + 350, y)
+        y += 40
 
         pygame.draw.line(self.screen, LINE, (px + 15, y), (px + pw - 15, y), 1)
         y += 14
 
-        # Rolle
-        draw_text(self.screen, "Rolle waehlen:", self.f_small, DIM, px + 20, y)
-        y += 26
-        self._btn_rects["mark_x"] = draw_button(
-            self.screen, pygame.Rect(px + 20, y, 140, 40), "Ich bin X",
-            self.f_small, active=(self.selected_mark == "X"), mouse_pos=mouse_pos)
-        self._btn_rects["mark_o"] = draw_button(
-            self.screen, pygame.Rect(px + 175, y, 140, 40), "Ich bin O",
-            self.f_small, active=(self.selected_mark == "O"), mouse_pos=mouse_pos)
-        y += 52
-
-        # Startspieler
+        # --- Startspieler-Buttons ---
         draw_text(self.screen, "Wer faengt an?", self.f_small, DIM, px + 20, y)
         y += 26
         self._btn_rects["start_h"] = draw_button(
-            self.screen, pygame.Rect(px + 20,  y, 110, 40), "Mensch",
-            self.f_small, active=(self.starter == "human"), mouse_pos=mouse_pos)
+            self.screen, pygame.Rect(px + 20,  y, 120, 42), "Mensch",
+            self.f_small, active=(self.starter == "human"),
+            mouse_pos=mouse_pos)
         self._btn_rects["start_r"] = draw_button(
-            self.screen, pygame.Rect(px + 140, y, 110, 40), "Roboter",
-            self.f_small, active=(self.starter == "robot"), mouse_pos=mouse_pos)
+            self.screen, pygame.Rect(px + 150, y, 120, 42), "Roboter",
+            self.f_small, active=(self.starter == "robot"),
+            mouse_pos=mouse_pos)
         self._btn_rects["start_z"] = draw_button(
-            self.screen, pygame.Rect(px + 260, y, 110, 40), "Zufall",
-            self.f_small, active=(self.starter == "random"), mouse_pos=mouse_pos)
-        y += 52
+            self.screen, pygame.Rect(px + 280, y, 120, 42), "Zufall",
+            self.f_small, active=(self.starter == "random"),
+            mouse_pos=mouse_pos)
+        y += 56
 
         pygame.draw.line(self.screen, LINE, (px + 15, y), (px + pw - 15, y), 1)
         y += 14
 
-        # Schwierigkeit
+        # --- Schwierigkeit ---
         draw_text(self.screen, "Schwierigkeit:", self.f_small, DIM, px + 20, y)
         y += 26
         self._btn_rects["easy"] = draw_button(
-            self.screen, pygame.Rect(px + 20,  y, 110, 38), "Leicht",
+            self.screen, pygame.Rect(px + 20,  y, 120, 40), "Leicht",
             self.f_small, active=(self.game.difficulty == AI_DIFFICULTY_EASY),
             mouse_pos=mouse_pos)
         self._btn_rects["medium"] = draw_button(
-            self.screen, pygame.Rect(px + 140, y, 110, 38), "Mittel",
+            self.screen, pygame.Rect(px + 150, y, 120, 40), "Mittel",
             self.f_small, active=(self.game.difficulty == AI_DIFFICULTY_MEDIUM),
             mouse_pos=mouse_pos)
         self._btn_rects["hard"] = draw_button(
-            self.screen, pygame.Rect(px + 260, y, 110, 38), "Schwer",
+            self.screen, pygame.Rect(px + 280, y, 120, 40), "Schwer",
             self.f_small, active=(self.game.difficulty == AI_DIFFICULTY_HARD),
             mouse_pos=mouse_pos)
-        y += 52
+        y += 56
 
         pygame.draw.line(self.screen, LINE, (px + 15, y), (px + pw - 15, y), 1)
         y += 14
 
-        # Aktions-Buttons
+        # --- Aktions-Buttons ---
         self._btn_rects["new_round"] = draw_button(
-            self.screen, pygame.Rect(px + 20,  y, 170, 44), "Neue Runde",
-            self.f_small, mouse_pos=mouse_pos)
+            self.screen, pygame.Rect(px + 20,  y, 175, 46), "Neue Runde",
+            self.f_body, mouse_pos=mouse_pos)
         self._btn_rects["full_rst"] = draw_button(
-            self.screen, pygame.Rect(px + 200, y, 170, 44), "Alles Reset",
-            self.f_small, mouse_pos=mouse_pos)
-        y += 58
+            self.screen, pygame.Rect(px + 210, y, 175, 46), "Alles Reset",
+            self.f_body, mouse_pos=mouse_pos)
+        y += 62
 
         pygame.draw.line(self.screen, LINE, (px + 15, y), (px + pw - 15, y), 1)
         y += 10
 
-        # Log
+        # --- Log ---
         draw_text(self.screen, "Log:", self.f_small, DIM, px + 20, y)
         y += 20
         log_box = pygame.Rect(px + 10, y, pw - 20, WIN_H - y - 15)
@@ -1010,12 +994,14 @@ class MainApp:
         pygame.draw.rect(self.screen, LINE, log_box, 1, border_radius=8)
 
         now     = time.time()
-        visible = [e for e in self.logs if now - e.ts <= LOG_TTL_SECONDS][-MAX_LOG_VISIBLE:]
+        visible = [e for e in self.logs
+                   if now - e.ts <= LOG_TTL_SECONDS][-MAX_LOG_VISIBLE:]
         ly = log_box.top + 8
         for entry in visible:
             col = {"ok": GREEN, "error": RED, "robot": BLUE,
                    "human": X_COL, "warn": YELLOW}.get(entry.kind, TEXT)
-            draw_text(self.screen, f"▸ {entry.text}", self.f_tiny, col, px + 18, ly)
+            draw_text(self.screen, f"▸ {entry.text}",
+                      self.f_tiny, col, px + 18, ly)
             ly += 19
 
     # ------------------------------------------------------------------
@@ -1024,48 +1010,41 @@ class MainApp:
     def _handle_click(self, pos):
         b = self._btn_rects
 
-        if b.get("mark_x") and b["mark_x"].collidepoint(pos):
-            self.choose_mark("X"); return
-        if b.get("mark_o") and b["mark_o"].collidepoint(pos):
-            self.choose_mark("O"); return
-
+        # Startspieler
         if b.get("start_h") and b["start_h"].collidepoint(pos):
-            if self.selected_mark:
-                self.choose_starter("human")
-            else:
-                self.log("Bitte erst Rolle waehlen", "warn")
-            return
+            self.choose_starter("human"); return
         if b.get("start_r") and b["start_r"].collidepoint(pos):
-            if self.selected_mark:
-                self.choose_starter("robot")
-            else:
-                self.log("Bitte erst Rolle waehlen", "warn")
-            return
+            self.choose_starter("robot"); return
         if b.get("start_z") and b["start_z"].collidepoint(pos):
-            if self.selected_mark:
-                self.choose_starter("random")
-            else:
-                self.log("Bitte erst Rolle waehlen", "warn")
-            return
+            self.choose_starter("random"); return
 
+        # Schwierigkeit – startet sofort neue Runde wenn Starter bekannt
         if b.get("easy") and b["easy"].collidepoint(pos):
             self.game.set_difficulty(AI_DIFFICULTY_EASY)
             self.log("Schwierigkeit: Leicht", "info")
-            self._start_new_round_with_current_settings(); return
+            if self.starter:
+                self.reset_round()
+            return
         if b.get("medium") and b["medium"].collidepoint(pos):
             self.game.set_difficulty(AI_DIFFICULTY_MEDIUM)
             self.log("Schwierigkeit: Mittel", "info")
-            self._start_new_round_with_current_settings(); return
+            if self.starter:
+                self.reset_round()
+            return
         if b.get("hard") and b["hard"].collidepoint(pos):
             self.game.set_difficulty(AI_DIFFICULTY_HARD)
             self.log("Schwierigkeit: Schwer", "info")
-            self._start_new_round_with_current_settings(); return
+            if self.starter:
+                self.reset_round()
+            return
 
+        # Reset-Buttons
         if b.get("new_round") and b["new_round"].collidepoint(pos):
             self.reset_round(); return
         if b.get("full_rst") and b["full_rst"].collidepoint(pos):
             self.full_reset(); return
 
+        # Maus-Klick auf das 2D-Brett
         fid = field_from_mouse(*pos)
         if fid is not None:
             self.human_move(fid)
@@ -1076,6 +1055,7 @@ class MainApp:
     def run(self):
         self.start_vision()
         self.log(f"Verbunden: {self.connection_label}", "ok")
+        self.log("Mensch = X  |  Roboter = O", "info")
 
         running = True
         while running:
