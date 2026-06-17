@@ -1,0 +1,4 @@
+2026-06-16 11:43:19,408 [INFO] socket_client: Verbinde mit Doosan @ 192.168.137.100:5000
+2026-06-16 11:43:21,498 [ERROR] socket_client: Verbindungsfehler: [WinError 10061] Es konnte keine Verbindung hergestellt werden, da der Zielcomputer die Verbindung verweigerte
+2026-06-16 11:44:55,079 [INFO] socket_client: Verbinde mit Doosan @ 192.168.137.100:5000
+2026-06-16 11:44:55,089 [INFO] socket_client: Verbindung erfolgreich hergestellt.

@@ -1,0 +1,9 @@
+2026-06-16 11:12:42,412 [INFO] socket_client: Verbinde mit Doosan @ 127.0.0.1:12345
+2026-06-16 11:12:44,460 [ERROR] socket_client: Verbindungsfehler: [WinError 10061] Es konnte keine Verbindung hergestellt werden, da der Zielcomputer die Verbindung verweigerte
+2026-06-16 11:12:54,412 [DEBUG] matplotlib: matplotlib data path: C:\Users\cobot-prog\Documents\TicTacToe\tictactoe\venv\Lib\site-packages\matplotlib\mpl-data
+2026-06-16 11:12:54,505 [DEBUG] matplotlib: CONFIGDIR=C:\Users\cobot-prog\.matplotlib
+2026-06-16 11:12:54,514 [DEBUG] matplotlib: interactive is False
+2026-06-16 11:12:54,528 [DEBUG] matplotlib: platform is win32
+2026-06-16 11:12:54,804 [DEBUG] matplotlib: CACHEDIR=C:\Users\cobot-prog\.matplotlib
+2026-06-16 11:12:54,868 [DEBUG] matplotlib.font_manager: Using fontManager instance from C:\Users\cobot-prog\.matplotlib\fontlist-v390.json
+2026-06-16 11:38:22,638 [INFO] socket_client: Verbindung wird getrennt.

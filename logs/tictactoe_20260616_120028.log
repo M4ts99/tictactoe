@@ -1,0 +1,7 @@
+2026-06-16 12:00:51,635 [DEBUG] matplotlib: matplotlib data path: C:\Users\cobot-prog\Documents\TicTacToe\tictactoe\venv\Lib\site-packages\matplotlib\mpl-data
+2026-06-16 12:00:51,712 [DEBUG] matplotlib: CONFIGDIR=C:\Users\cobot-prog\.matplotlib
+2026-06-16 12:00:51,717 [DEBUG] matplotlib: interactive is False
+2026-06-16 12:00:51,718 [DEBUG] matplotlib: platform is win32
+2026-06-16 12:00:51,970 [DEBUG] matplotlib: CACHEDIR=C:\Users\cobot-prog\.matplotlib
+2026-06-16 12:00:52,032 [DEBUG] matplotlib.font_manager: Using fontManager instance from C:\Users\cobot-prog\.matplotlib\fontlist-v390.json
+2026-06-16 12:03:02,525 [INFO] robot_controller: pick_stone(O) @ (0.0, 0.0, 0.0)
