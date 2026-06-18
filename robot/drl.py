@@ -5,7 +5,7 @@
 #   - Mensch = X
 #   - Roboter = O
 #
-# Protokoll:
+# Protokoll (Command-Channel, Port 5020):
 #   PICK O <index>   -> O-Stein greifen (1-5), kein HOME danach
 #   PLACE <1-9>      -> Stein ablegen, danach HOME
 #   PUSH             -> Belohnung schieben, danach HOME
@@ -14,15 +14,34 @@
 # Antworten:
 #   OK\n    -> Befehl + Bewegung abgeschlossen
 #   ERROR\n -> Befehl fehlgeschlagen
+#
+# Event-Channel (Port 5021):
+#   DRL sendet Button-Events an main_v2.py:
+#   EVENT:STARTER:human\n
+#   EVENT:STARTER:robot\n
+#   EVENT:STARTER:random\n
+#   EVENT:DIFFICULTY:easy\n
+#   EVENT:DIFFICULTY:medium\n
+#   EVENT:DIFFICULTY:hard\n
+#   EVENT:RESET\n
+#
+# Digital Inputs (5 Buttons):
+#   B1 (DI 1) – Startspieler: zyklisch umschalten (Mensch -> Roboter -> Zufall -> Mensch -> ...)
+#   B2 (DI 2) – Schwierigkeit Leicht  -> startet Runde sofort
+#   B3 (DI 3) – Schwierigkeit Mittel  -> startet Runde sofort
+#   B4 (DI 4) – Schwierigkeit Schwer  -> startet Runde sofort
+#   B5 (DI 5) – Vollstaendiger Reset  -> Roboter faehrt HOME
 # =============================================================================
 
 import socket
+import time
 
 # -----------------------------------------------------------------------------
 # Netzwerk
 # -----------------------------------------------------------------------------
-HOST = "0.0.0.0"
-PORT = 5006
+HOST       = "0.0.0.0"
+PORT       = 5020   # Command-Channel (main -> DRL)
+EVENT_PORT = 5021   # Event-Channel   (DRL -> main)
 
 # -----------------------------------------------------------------------------
 # Bewegungsparameter
@@ -32,14 +51,12 @@ ACC_FAST = 150
 VEL_SLOW = 60
 ACC_SLOW = 60
 
-APPROACH_Z = 60.0
+APPROACH_Z    = 60.0
 PUSH_DISTANCE = 80.0
 
 # -----------------------------------------------------------------------------
 # Positionen
 # -----------------------------------------------------------------------------
-# Diese Namen muessen in deiner DRL-Umgebung als Global-Variablen existieren.
-# Falls der Name anders ist, hier anpassen.
 GLOBAL_HOME = Global_home
 
 PICK_O_POSITIONS = {
@@ -62,18 +79,28 @@ PLACE_POSITIONS = {
     9: Global_9,
 }
 
-# Belohnungsposition
 PUSH_POS = Global_pick
-# Am Anfang des DRL, nach den Imports:
 
-EVENT_PORT = 5007
+# -----------------------------------------------------------------------------
+# Digital Input Pin-Nummern (anpassen falls Controller anders belegt)
+# -----------------------------------------------------------------------------
+DI_STARTER = 1   # B1 – Startspieler (zyklisch)
+DI_EASY    = 2   # B2 – Schwierigkeit Leicht
+DI_MEDIUM  = 3   # B3 – Schwierigkeit Mittel
+DI_HARD    = 4   # B4 – Schwierigkeit Schwer
+DI_RESET   = 5   # B5 – Vollstaendiger Reset
 
-# Globale Variable: Event-Client-Socket (wird gesetzt wenn main verbunden ist)
-event_client = None
-event_client_lock = None   # DRL hat kein threading – sequenziell abhandeln
+# -----------------------------------------------------------------------------
+# Event-Channel: globaler Client-Socket
+# -----------------------------------------------------------------------------
+event_client = None   # wird in start_event_server() gesetzt
+
 
 def send_event(msg):
-    """Sendet ein Event-String an main_v2.py über Port 5007."""
+    """
+    Sendet einen Event-String an main_v2.py ueber den Event-Port.
+    Bei Fehler wird event_client auf None gesetzt (Events deaktiviert).
+    """
     global event_client
     if event_client is None:
         tp_log("EVENT nicht gesendet (kein Client): " + msg)
@@ -84,99 +111,131 @@ def send_event(msg):
     except Exception as e:
         tp_log("EVENT Sendefehler: " + str(e))
         event_client = None
-# -----------------------------------------------------------------------------
-# Hilfsfunktionen
+
+
 def start_event_server():
     """
-    Wartet auf eine Verbindung von main_v2.py auf Port 5007.
-    Gibt den Client-Socket zurück.
-    Wird VOR der Button-Loop aufgerufen.
+    Oeffnet EVENT_PORT und wartet max. 30s auf einen Client (main_v2.py).
+    Wird NACH dem Command-Server gestartet.
     """
     global event_client
     ev_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    ev_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    ev_sock.bind(("0.0.0.0", EVENT_PORT))
+    try:
+        ev_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    except Exception:
+        pass
+    try:
+        ev_sock.bind(("0.0.0.0", EVENT_PORT))
+    except Exception as e:
+        tp_log("Event-Port " + str(EVENT_PORT) + " Bind-Fehler: " + str(e))
+        ev_sock.close()
+        return
     ev_sock.listen(1)
     ev_sock.settimeout(30.0)
-    tp_log("Warte auf Event-Client (Port " + str(EVENT_PORT) + ")...")
+    tp_log("[Port " + str(EVENT_PORT) + "] FREI – warte auf Event-Client (max 30s)...")
+    tp_popup("Port " + str(EVENT_PORT) + " FREI\nWarte auf Event-Client\n(main_v2.py starten)")
     try:
         client, addr = ev_sock.accept()
         event_client = client
-        tp_log("Event-Client verbunden: " + str(addr[0]))
+        event_client.settimeout(None)
+        tp_log("[Port " + str(EVENT_PORT) + "] Verbunden: " + str(addr[0]))
+        tp_popup("Port " + str(EVENT_PORT) + " OK\nEvent-Client verbunden:\n" + str(addr[0]))
     except socket.timeout:
-        tp_log("Kein Event-Client verbunden – Events deaktiviert")
-    ev_sock.close()
-# Konstanten (anpassen an echte Pin-Nummern!)
-DI_HUMAN_ON  = 1
-DI_HUMAN_OFF = 2
-DI_EASY      = 3
-DI_MEDIUM    = 4
-DI_HARD      = 5
-DI_RESET     = 6
+        tp_log("[Port " + str(EVENT_PORT) + "] Timeout – kein Client. Buttons senden keine Events.")
+        tp_popup("Port " + str(EVENT_PORT) + " TIMEOUT\nKein Event-Client verbunden\nButtons deaktiviert")
+    finally:
+        ev_sock.close()
 
-LONG_PRESS_S = 3.0
 
-def poll_buttons():
+# -----------------------------------------------------------------------------
+# Button-Polling
+# -----------------------------------------------------------------------------
+
+# Button-Zustand (Flanken-Erkennung)
+_prev_state   = {}   # {pin: bool} – letzter bekannter Zustand
+
+# B1-Zyklus: merkt sich welcher Starter gerade aktiv ist
+# 0 = human (Standard), 1 = robot, 2 = random
+starter_cycle = 0
+
+
+def poll_buttons_once():
     """
-    Liest die Digital Inputs und sendet Events.
-    Wird in einer eigenen while-True-Schleife im DRL aufgerufen.
-    Hinweis: Im DRL läuft alles sequenziell – diese Funktion blockiert
-    den Command-Server während des Pollings nicht, wenn sie als
-    eigener Thread gestartet wird (tp_thread o.ä.).
+    Liest alle 5 Digital Inputs genau einmal und sendet ggf. Events.
+    Wird bei jedem socket.timeout (~1s) aufgerufen – kein eigener Loop,
+    damit der Command-Server nicht blockiert wird.
+
+    B1 – Zyklus-Logik:
+      Jeder neue Tastendruck schaltet weiter:
+      Mensch -> Roboter -> Zufall -> Mensch -> ...
+      Standard beim Start: Mensch (cycle = 0)
+
+    B2/B3/B4/B5 – Flanken-Erkennung:
+      Event wird nur beim Uebergang OFF -> ON gesendet,
+      nicht bei gehaltenem Button.
     """
-    press_start = {}   # pin -> timestamp
+    global _prev_state, starter_cycle
 
-    while True:
-        # --- B1: Mensch AN ---
-        val_b1 = get_digital_input(DI_HUMAN_ON)
-        if val_b1 == ON:
-            if DI_HUMAN_ON not in press_start:
-                press_start[DI_HUMAN_ON] = tp_get_current_time()
-            elif tp_get_current_time() - press_start[DI_HUMAN_ON] >= LONG_PRESS_S:
-                send_event("EVENT:STARTER:random")
-                press_start.pop(DI_HUMAN_ON, None)
-                wait(0.5)   # Entprellung nach Longpress
+    # -------------------------------------------------------------------------
+    # B1 – Startspieler (Zyklus-Logik)
+    # -------------------------------------------------------------------------
+    b1 = (get_digital_input(DI_STARTER) == ON)
+
+    if b1 and not _prev_state.get(DI_STARTER, False):
+        # Neuer Tastendruck erkannt – Zyklus weiterschalter
+        starter_cycle = (starter_cycle + 1) % 3
+
+        if starter_cycle == 0:
+            send_event("EVENT:STARTER:human")
+            tp_log("[B1] Startspieler: Mensch")
+        elif starter_cycle == 1:
+            send_event("EVENT:STARTER:robot")
+            tp_log("[B1] Startspieler: Roboter")
         else:
-            if DI_HUMAN_ON in press_start:
-                # Kurzer Druck (kein Longpress)
-                send_event("EVENT:STARTER:human")
-            press_start.pop(DI_HUMAN_ON, None)
+            send_event("EVENT:STARTER:random")
+            tp_log("[B1] Startspieler: Zufall")
 
-        # --- B2: Roboter (AUS) ---
-        val_b2 = get_digital_input(DI_HUMAN_OFF)
-        if val_b2 == ON:
-            if DI_HUMAN_OFF not in press_start:
-                press_start[DI_HUMAN_OFF] = tp_get_current_time()
-            elif tp_get_current_time() - press_start[DI_HUMAN_OFF] >= LONG_PRESS_S:
-                send_event("EVENT:STARTER:random")
-                press_start.pop(DI_HUMAN_OFF, None)
-                wait(0.5)
-        else:
-            if DI_HUMAN_OFF in press_start:
-                send_event("EVENT:STARTER:robot")
-            press_start.pop(DI_HUMAN_OFF, None)
+    _prev_state[DI_STARTER] = b1
 
-        # --- B3: Leicht ---
-        if get_digital_input(DI_EASY) == ON:
-            send_event("EVENT:DIFFICULTY:easy")
-            wait(0.4)   # Entprellung
+    # -------------------------------------------------------------------------
+    # B2 – Schwierigkeit Leicht
+    # -------------------------------------------------------------------------
+    b2 = (get_digital_input(DI_EASY) == ON)
+    if b2 and not _prev_state.get(DI_EASY, False):
+        send_event("EVENT:DIFFICULTY:easy")
+        tp_log("[B2] Schwierigkeit: Leicht")
+    _prev_state[DI_EASY] = b2
 
-        # --- B4: Mittel ---
-        if get_digital_input(DI_MEDIUM) == ON:
-            send_event("EVENT:DIFFICULTY:medium")
-            wait(0.4)
+    # -------------------------------------------------------------------------
+    # B3 – Schwierigkeit Mittel
+    # -------------------------------------------------------------------------
+    b3 = (get_digital_input(DI_MEDIUM) == ON)
+    if b3 and not _prev_state.get(DI_MEDIUM, False):
+        send_event("EVENT:DIFFICULTY:medium")
+        tp_log("[B3] Schwierigkeit: Mittel")
+    _prev_state[DI_MEDIUM] = b3
 
-        # --- B5: Schwer ---
-        if get_digital_input(DI_HARD) == ON:
-            send_event("EVENT:DIFFICULTY:hard")
-            wait(0.4)
+    # -------------------------------------------------------------------------
+    # B4 – Schwierigkeit Schwer
+    # -------------------------------------------------------------------------
+    b4 = (get_digital_input(DI_HARD) == ON)
+    if b4 and not _prev_state.get(DI_HARD, False):
+        send_event("EVENT:DIFFICULTY:hard")
+        tp_log("[B4] Schwierigkeit: Schwer")
+    _prev_state[DI_HARD] = b4
 
-        # --- B6: Reset ---
-        if get_digital_input(DI_RESET) == ON:
-            send_event("EVENT:RESET")
-            wait(0.6)   # Etwas längere Entprellung
+    # -------------------------------------------------------------------------
+    # B5 – Reset
+    # -------------------------------------------------------------------------
+    b5 = (get_digital_input(DI_RESET) == ON)
+    if b5 and not _prev_state.get(DI_RESET, False):
+        send_event("EVENT:RESET")
+        tp_log("[B5] Reset")
+    _prev_state[DI_RESET] = b5
 
-        wait(0.05)   # Polling-Intervall: ~20 Hz    
+
+# -----------------------------------------------------------------------------
+# Hilfsfunktionen
 # -----------------------------------------------------------------------------
 def go_home():
     tp_log("Fahre HOME")
@@ -251,20 +310,32 @@ def place_sequence(field_id):
 
 
 def push_sequence():
-    """Faehrt zur Belohnungsposition und schiebt."""
-    pos = PUSH_POS
+    """Faehrt zur Vorposition, wartet, und fuehrt dann die definierte Sequenz aus."""
     tp_log("PUSH")
 
-    movel(approach(pos), v=VEL_FAST, a=ACC_FAST)
-    movel(pos, v=VEL_SLOW, a=ACC_SLOW)
+    try:
+        movel(Global_prepick, v=VEL_FAST, a=ACC_FAST)
+        movel(Global_prepick2, v=VEL_FAST, a=ACC_FAST)
+        movel(Global_pick, v=VEL_FAST, a=ACC_FAST)
 
-    push_target = posx(pos[0], pos[1] + PUSH_DISTANCE, pos[2], pos[3], pos[4], pos[5])
-    movel(push_target, v=VEL_SLOW, a=ACC_SLOW)
-    movel(approach(pos), v=VEL_FAST, a=ACC_FAST)
+        target = posx(Global_pick[0], Global_pick[1], Global_pick[2] + 200.0,
+                      Global_pick[3], Global_pick[4], Global_pick[5])
+        movel(target, v=VEL_SLOW, a=ACC_SLOW)
+
+        wait(10.0)
+
+        movel(Global_prepick2, v=VEL_FAST, a=ACC_FAST)
+
+        set_digital_output(13, ON)
+        wait(0.1)
+        set_digital_output(13, OFF)
+
+    except Exception as e:
+        tp_log("PUSH Fehler: " + str(e))
+        return False
 
     tp_log("PUSH fertig")
     return True
-
 
 # -----------------------------------------------------------------------------
 # Befehlsverarbeitung
@@ -331,23 +402,24 @@ def process_command(line):
 
 
 # -----------------------------------------------------------------------------
-# TCP-Server
+# TCP-Server (Hauptschleife)
 # -----------------------------------------------------------------------------
 def main():
-    start_event_server()
+    # TCP-Tool-Frame setzen
     try:
         set_tcp([0, 0, 0, 0, 0, 0])
         tp_log("TCP gesetzt")
     except Exception as e:
         tp_log("TCP-Setzen ignoriert: " + str(e))
 
+    # Command-Server auf PORT binden
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     except Exception:
         pass
 
-    server_sock.settimeout(1.0)
+    server_sock.settimeout(1.0)   # Timeout fuer accept() – erlaubt Button-Polling
 
     bound = False
     for attempt in range(1, 6):
@@ -360,46 +432,61 @@ def main():
             wait(3)
 
     if not bound:
-        tp_popup("FEHLER: Port " + str(PORT) + " belegt!")
+        tp_log("[Port " + str(PORT) + "] FEHLER – Port bereits belegt!")
+        tp_popup("FEHLER!\nPort " + str(PORT) + " ist belegt!\nBitte neu starten.")
         return
 
     server_sock.listen(1)
-    tp_popup("TicTacToe Server\nPort " + str(PORT) + " bereit")
-    tp_log("Server gestartet, fahre HOME...")
+    tp_log("[Port " + str(PORT) + "] FREI – Command-Server bereit")
+    tp_popup("Port " + str(PORT) + " FREI\nCommand-Server bereit\nFahre HOME...")
 
+    # Roboter faehrt HOME
     try:
         go_home()
-        tp_log("HOME erreicht, warte auf Verbindung...")
+        tp_log("HOME erreicht")
     except Exception as e:
         tp_log("HOME fehlgeschlagen (ignoriert): " + str(e))
-        tp_log("Warte auf Verbindung...")
 
+    # Event-Server starten (wartet max. 30s auf main_v2.py)
+    start_event_server()
+
+    tp_popup("Ports bereit:\nPort " + str(PORT) + " (Commands) OK\nPort " + str(EVENT_PORT) + " (Events) " + ("OK" if event_client else "INAKTIV") + "\nWarte auf Verbindung...")
+    tp_log("Beide Ports bereit – warte auf Command-Client...")
+
+    # -------------------------------------------------------------------------
+    # Haupt-Accept-Loop
+    # -------------------------------------------------------------------------
     while True:
+        # Auf neuen Command-Client warten
         try:
             client_sock, addr = server_sock.accept()
         except socket.timeout:
+            # Kein Client verbunden – Buttons pollen und weiter warten
+            poll_buttons_once()
             continue
         except Exception as e:
             tp_log("Accept Fehler: " + str(e))
             break
 
         client_ip = addr[0]
-        tp_log("Verbunden: " + client_ip)
-        tp_popup("Client: " + client_ip)
+        tp_log("[Port " + str(PORT) + "] Command-Client verbunden: " + client_ip)
+        tp_popup("Port " + str(PORT) + " – Client verbunden:\n" + client_ip)
 
-        client_sock.settimeout(1.0)
+        client_sock.settimeout(1.0)   # Timeout fuer recv() – erlaubt Button-Polling
         buf = ""
 
+        # Command-Empfangs-Loop fuer diesen Client
         try:
             while True:
                 try:
                     data = client_sock.recv(1024)
                     if not data:
-                        tp_log("Client getrennt")
+                        tp_log("Command-Client getrennt")
                         break
 
                     buf += data.decode("utf-8")
 
+                    # Alle vollstaendigen Zeilen verarbeiten
                     while "\n" in buf:
                         line, buf = buf.split("\n", 1)
                         line = line.strip()
@@ -419,6 +506,8 @@ def main():
                             send_error(client_sock)
 
                 except socket.timeout:
+                    # Kein Befehl eingegangen – Buttons pollen
+                    poll_buttons_once()
                     continue
 
         except Exception as e:
@@ -428,7 +517,7 @@ def main():
                 client_sock.close()
             except Exception:
                 pass
-            tp_log("Warte auf naechsten Client...")
+            tp_log("Warte auf naechsten Command-Client...")
 
 
 main()
