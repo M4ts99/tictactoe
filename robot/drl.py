@@ -64,9 +64,119 @@ PLACE_POSITIONS = {
 
 # Belohnungsposition
 PUSH_POS = Global_pick
+# Am Anfang des DRL, nach den Imports:
 
+EVENT_PORT = 5007
+
+# Globale Variable: Event-Client-Socket (wird gesetzt wenn main verbunden ist)
+event_client = None
+event_client_lock = None   # DRL hat kein threading – sequenziell abhandeln
+
+def send_event(msg):
+    """Sendet ein Event-String an main_v2.py über Port 5007."""
+    global event_client
+    if event_client is None:
+        tp_log("EVENT nicht gesendet (kein Client): " + msg)
+        return
+    try:
+        event_client.sendall((msg.strip() + "\n").encode("utf-8"))
+        tp_log("EVENT gesendet: " + msg)
+    except Exception as e:
+        tp_log("EVENT Sendefehler: " + str(e))
+        event_client = None
 # -----------------------------------------------------------------------------
 # Hilfsfunktionen
+def start_event_server():
+    """
+    Wartet auf eine Verbindung von main_v2.py auf Port 5007.
+    Gibt den Client-Socket zurück.
+    Wird VOR der Button-Loop aufgerufen.
+    """
+    global event_client
+    ev_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ev_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    ev_sock.bind(("0.0.0.0", EVENT_PORT))
+    ev_sock.listen(1)
+    ev_sock.settimeout(30.0)
+    tp_log("Warte auf Event-Client (Port " + str(EVENT_PORT) + ")...")
+    try:
+        client, addr = ev_sock.accept()
+        event_client = client
+        tp_log("Event-Client verbunden: " + str(addr[0]))
+    except socket.timeout:
+        tp_log("Kein Event-Client verbunden – Events deaktiviert")
+    ev_sock.close()
+# Konstanten (anpassen an echte Pin-Nummern!)
+DI_HUMAN_ON  = 1
+DI_HUMAN_OFF = 2
+DI_EASY      = 3
+DI_MEDIUM    = 4
+DI_HARD      = 5
+DI_RESET     = 6
+
+LONG_PRESS_S = 3.0
+
+def poll_buttons():
+    """
+    Liest die Digital Inputs und sendet Events.
+    Wird in einer eigenen while-True-Schleife im DRL aufgerufen.
+    Hinweis: Im DRL läuft alles sequenziell – diese Funktion blockiert
+    den Command-Server während des Pollings nicht, wenn sie als
+    eigener Thread gestartet wird (tp_thread o.ä.).
+    """
+    press_start = {}   # pin -> timestamp
+
+    while True:
+        # --- B1: Mensch AN ---
+        val_b1 = get_digital_input(DI_HUMAN_ON)
+        if val_b1 == ON:
+            if DI_HUMAN_ON not in press_start:
+                press_start[DI_HUMAN_ON] = tp_get_current_time()
+            elif tp_get_current_time() - press_start[DI_HUMAN_ON] >= LONG_PRESS_S:
+                send_event("EVENT:STARTER:random")
+                press_start.pop(DI_HUMAN_ON, None)
+                wait(0.5)   # Entprellung nach Longpress
+        else:
+            if DI_HUMAN_ON in press_start:
+                # Kurzer Druck (kein Longpress)
+                send_event("EVENT:STARTER:human")
+            press_start.pop(DI_HUMAN_ON, None)
+
+        # --- B2: Roboter (AUS) ---
+        val_b2 = get_digital_input(DI_HUMAN_OFF)
+        if val_b2 == ON:
+            if DI_HUMAN_OFF not in press_start:
+                press_start[DI_HUMAN_OFF] = tp_get_current_time()
+            elif tp_get_current_time() - press_start[DI_HUMAN_OFF] >= LONG_PRESS_S:
+                send_event("EVENT:STARTER:random")
+                press_start.pop(DI_HUMAN_OFF, None)
+                wait(0.5)
+        else:
+            if DI_HUMAN_OFF in press_start:
+                send_event("EVENT:STARTER:robot")
+            press_start.pop(DI_HUMAN_OFF, None)
+
+        # --- B3: Leicht ---
+        if get_digital_input(DI_EASY) == ON:
+            send_event("EVENT:DIFFICULTY:easy")
+            wait(0.4)   # Entprellung
+
+        # --- B4: Mittel ---
+        if get_digital_input(DI_MEDIUM) == ON:
+            send_event("EVENT:DIFFICULTY:medium")
+            wait(0.4)
+
+        # --- B5: Schwer ---
+        if get_digital_input(DI_HARD) == ON:
+            send_event("EVENT:DIFFICULTY:hard")
+            wait(0.4)
+
+        # --- B6: Reset ---
+        if get_digital_input(DI_RESET) == ON:
+            send_event("EVENT:RESET")
+            wait(0.6)   # Etwas längere Entprellung
+
+        wait(0.05)   # Polling-Intervall: ~20 Hz    
 # -----------------------------------------------------------------------------
 def go_home():
     tp_log("Fahre HOME")
@@ -224,6 +334,7 @@ def process_command(line):
 # TCP-Server
 # -----------------------------------------------------------------------------
 def main():
+    start_event_server()
     try:
         set_tcp([0, 0, 0, 0, 0, 0])
         tp_log("TCP gesetzt")

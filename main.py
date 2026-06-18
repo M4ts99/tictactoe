@@ -10,6 +10,13 @@
 #   - Vision-Thread: Kamera lesen + YOLO-Inferenz (separater Thread)
 #   - Pygame-Thread: UI zeichnen + Events (Hauptthread)
 #   - Shared State:  frame + detections via threading.Lock
+#
+# Digital Inputs (5 Buttons am Roboter-Controller):
+#   B1 – Startspieler-Toggle (kurz: Mensch/Roboter wechseln | >3s: Zufallsmodus)
+#   B2 – Schwierigkeit Leicht  → startet Runde sofort
+#   B3 – Schwierigkeit Mittel  → startet Runde sofort
+#   B4 – Schwierigkeit Schwer  → startet Runde sofort
+#   B5 – Vollständiger Reset   → alle Einstellungen löschen, Roboter → HOME
 # =============================================================================
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ import cv2
 import numpy as np
 import pygame
 
+from robot.event_listener import EventListener
 from config import (
     AI_DIFFICULTY_EASY,
     AI_DIFFICULTY_HARD,
@@ -32,6 +40,7 @@ from config import (
     YOLO_CLASSES,
     ROBOT_IP,
     ROBOT_PORT,
+    ROBOT_EVENT_PORT,
 )
 from game.game_manager import GameManager
 from robot.socket_client import DoosanSocket
@@ -258,13 +267,14 @@ class StartScreen:
                 if event.type == pygame.QUIT:
                     pygame.quit()
                     raise SystemExit
-                self._handle_event(event, mouse)
+                self._handle_pygame_event(event, mouse)
             self._draw(mouse)
             pygame.display.flip()
             clock.tick(60)
         return self.result
 
-    def _handle_event(self, event, mouse):
+    def _handle_pygame_event(self, event, mouse):
+        """Verarbeitet pygame-Events (Maus, Tastatur) im StartScreen."""
         if self.connecting:
             return
 
@@ -465,6 +475,18 @@ class MainApp:
         self.vs = VisionState()
         self._vision_thread: threading.Thread | None = None
 
+        # ------------------------------------------------------------------
+        # Pending Events (von Button-Thread gesetzt, im Hauptthread verarbeitet)
+        # Wird thread-sicher über einen Lock geschützt
+        # ------------------------------------------------------------------
+        self._pending_lock:       threading.Lock = threading.Lock()
+        self._pending_starter:    str | None     = None   # "human"|"robot"|"random"
+        self._pending_difficulty: str | None     = None   # difficulty-Konstante
+        self._pending_reset:      bool           = False
+
+        # Event-Listener (DRL → PC, Port 5007)
+        self._event_listener: EventListener | None = None
+
     # ------------------------------------------------------------------
     # Log
     # ------------------------------------------------------------------
@@ -491,6 +513,140 @@ class MainApp:
         self.vs.running = False
         if self._vision_thread:
             self._vision_thread.join(timeout=3.0)
+
+    # ------------------------------------------------------------------
+    # Event-Listener (Digital Inputs vom DRL)
+    # ------------------------------------------------------------------
+    def _start_event_listener(self):
+        """
+        Startet den TCP-Listener auf Port 5007.
+        Events vom DRL werden über _on_button_event() verarbeitet.
+        """
+        self._event_listener = EventListener(
+            ip=self.socket_client.ip,
+            port=ROBOT_EVENT_PORT,
+            callback=self._on_button_event
+        )
+        ok = self._event_listener.start()
+        if ok:
+            self.log("Button-Listener aktiv (Port 5007)", "ok")
+        else:
+            self.log("Button-Listener nicht verbunden – physische Buttons deaktiviert", "warn")
+
+    def _stop_event_listener(self):
+        if self._event_listener:
+            self._event_listener.stop()
+            self._event_listener = None
+
+    def _on_button_event(self, event_str: str):
+        """
+        Callback des EventListener-Threads – läuft NICHT im Hauptthread!
+        Deshalb: nur Pending-Flags setzen, kein direktes pygame-/Spiellogik-Aufruf.
+
+        Erwartete Event-Formate:
+            EVENT:STARTER:human
+            EVENT:STARTER:robot
+            EVENT:STARTER:random
+            EVENT:STARTER:toggle      ← B1 kurz: aktuellen Starter umschalten
+            EVENT:DIFFICULTY:easy
+            EVENT:DIFFICULTY:medium
+            EVENT:DIFFICULTY:hard
+            EVENT:RESET
+        """
+        parts = event_str.strip().split(":")
+        if len(parts) < 2 or parts[0].upper() != "EVENT":
+            return
+
+        kind = parts[1].upper()
+
+        with self._pending_lock:
+
+            # --- B1: Startspieler ---
+            if kind == "STARTER" and len(parts) >= 3:
+                value = parts[2].lower()
+                if value == "toggle":
+                    # Kurzdruck: Mensch ↔ Roboter wechseln (Zufall bleibt)
+                    if self._pending_starter == "human" or self.starter == "human":
+                        self._pending_starter = "robot"
+                    elif self._pending_starter == "robot" or self.starter == "robot":
+                        self._pending_starter = "human"
+                    else:
+                        # Noch kein Starter gewählt → Mensch als Standard
+                        self._pending_starter = "human"
+                    print(f"[Button] Starter toggle → {self._pending_starter}")
+                elif value in ("human", "robot", "random"):
+                    self._pending_starter = value
+                    print(f"[Button] Starter: {value}")
+
+            # --- B2/B3/B4: Schwierigkeit ---
+            elif kind == "DIFFICULTY" and len(parts) >= 3:
+                diff_map = {
+                    "easy":   AI_DIFFICULTY_EASY,
+                    "medium": AI_DIFFICULTY_MEDIUM,
+                    "hard":   AI_DIFFICULTY_HARD,
+                }
+                diff = parts[2].lower()
+                if diff in diff_map:
+                    self._pending_difficulty = diff_map[diff]
+                    print(f"[Button] Schwierigkeit: {diff}")
+
+            # --- B5: Reset ---
+            elif kind == "RESET":
+                self._pending_reset = True
+                print("[Button] Reset")
+
+    def _process_pending_events(self):
+        """
+        Wird jeden Frame im Hauptthread aufgerufen.
+        Verarbeitet Pending-Flags aus _on_button_event() thread-sicher.
+
+        Reihenfolge:
+          1. Reset hat höchste Priorität
+          2. Schwierigkeit (setzt auch Runde neu, falls Starter bekannt)
+          3. Starter (speichert Wahl; Runde startet erst mit Schwierigkeitsbutton)
+        """
+        with self._pending_lock:
+            do_reset      = self._pending_reset
+            do_difficulty = self._pending_difficulty
+            do_starter    = self._pending_starter
+
+            self._pending_reset      = False
+            self._pending_difficulty = None
+            self._pending_starter    = None
+
+        # --- Reset ---
+        if do_reset:
+            self.log("[Button B5] Vollständiger Reset", "warn")
+            self.full_reset()
+            return   # Reset überschreibt alles andere
+
+        # --- Schwierigkeit (B2/B3/B4) ---
+        # NEU
+        if do_difficulty is not None:
+            diff_label = {
+                AI_DIFFICULTY_EASY:   "Leicht",
+                AI_DIFFICULTY_MEDIUM: "Mittel",
+                AI_DIFFICULTY_HARD:   "Schwer",
+            }.get(do_difficulty, do_difficulty)
+            self.game.set_difficulty(do_difficulty)
+            self.log(f"[Button] Schwierigkeit: {diff_label}", "info")
+        
+            # Falls noch kein Starter gewählt → automatisch Mensch
+            if self.starter is None:
+                self.starter = "human"
+                self.log("Kein Startspieler gesetzt – Mensch beginnt automatisch", "info")
+        
+            self.log("Runde wird gestartet...", "ok")
+            self.reset_round()
+
+        # --- Starter (B1) ---
+        if do_starter is not None:
+            self.starter = do_starter
+            label = {"human": "Mensch", "robot": "Roboter",
+                     "random": "Zufall"}.get(do_starter, do_starter)
+            self.log(f"[Button B1] Startspieler: {label} – "
+                     f"Drücke B2/B3/B4 zum Starten", "info")
+            # Runde startet NICHT hier – erst wenn Schwierigkeit gewählt wird
 
     # ------------------------------------------------------------------
     # Startspieler-Auswahl
@@ -628,7 +784,6 @@ class MainApp:
 
         self.log(f"Sende PICK {ROBOT_MARK}", "robot")
         ok_pick = (self.robot_controller.pick()
-
                    if self.robot_connected
                    else self._simulate_delay())
 
@@ -716,7 +871,6 @@ class MainApp:
         elif self.game.state == "ai_won":
             self.log("Roboter gewinnt – keine Belohnung.", "info")
             self.phase = self.PHASE_GAME_OVER
-
         else:
             self.phase = self.PHASE_GAME_OVER
 
@@ -921,6 +1075,15 @@ class MainApp:
                   px + pw // 2, y, "center")
         y += 22
 
+        # --- Button-Listener-Status ---
+        listener_ok = (self._event_listener is not None and
+                       self._event_listener.is_running())
+        listener_col = GREEN if listener_ok else DIM
+        listener_txt = "● Buttons aktiv" if listener_ok else "○ Buttons inaktiv"
+        draw_text(self.screen, listener_txt, self.f_tiny, listener_col,
+                  px + pw // 2, y, "center")
+        y += 22
+
         # --- Rollen-Info (fest) ---
         draw_text(self.screen, "Mensch: X     Roboter: O",
                   self.f_body, DIM, px + pw // 2, y, "center")
@@ -938,8 +1101,8 @@ class MainApp:
         pygame.draw.line(self.screen, LINE, (px + 15, y), (px + pw - 15, y), 1)
         y += 14
 
-        # --- Startspieler-Buttons ---
-        draw_text(self.screen, "Wer faengt an?", self.f_small, DIM, px + 20, y)
+        # --- Startspieler-Buttons (UI) ---
+        draw_text(self.screen, "Wer faengt an?  [B1]", self.f_small, DIM, px + 20, y)
         y += 26
         self._btn_rects["start_h"] = draw_button(
             self.screen, pygame.Rect(px + 20,  y, 120, 42), "Mensch",
@@ -958,8 +1121,9 @@ class MainApp:
         pygame.draw.line(self.screen, LINE, (px + 15, y), (px + pw - 15, y), 1)
         y += 14
 
-        # --- Schwierigkeit ---
-        draw_text(self.screen, "Schwierigkeit:", self.f_small, DIM, px + 20, y)
+        # --- Schwierigkeit (UI) ---
+        draw_text(self.screen, "Schwierigkeit  [B2 / B3 / B4]",
+                  self.f_small, DIM, px + 20, y)
         y += 26
         self._btn_rects["easy"] = draw_button(
             self.screen, pygame.Rect(px + 20,  y, 120, 40), "Leicht",
@@ -978,12 +1142,12 @@ class MainApp:
         pygame.draw.line(self.screen, LINE, (px + 15, y), (px + pw - 15, y), 1)
         y += 14
 
-        # --- Aktions-Buttons ---
+        # --- Aktions-Buttons (UI) ---
         self._btn_rects["new_round"] = draw_button(
             self.screen, pygame.Rect(px + 20,  y, 175, 46), "Neue Runde",
             self.f_body, mouse_pos=mouse_pos)
         self._btn_rects["full_rst"] = draw_button(
-            self.screen, pygame.Rect(px + 210, y, 175, 46), "Alles Reset",
+            self.screen, pygame.Rect(px + 210, y, 175, 46), "Alles Reset  [B5]",
             self.f_body, mouse_pos=mouse_pos)
         y += 62
 
@@ -1009,44 +1173,58 @@ class MainApp:
             ly += 19
 
     # ------------------------------------------------------------------
-    # Klick-Handler
+    # Klick-Handler (Maus-UI)
     # ------------------------------------------------------------------
     def _handle_click(self, pos):
         b = self._btn_rects
 
-        # Startspieler
+        # Startspieler (nur speichern, Runde startet erst mit Schwierigkeit)
         if b.get("start_h") and b["start_h"].collidepoint(pos):
-            self.choose_starter("human"); return
+            self.starter = "human"
+            self.log("Startspieler: Mensch – wähle Schwierigkeit zum Starten", "info")
+            return
         if b.get("start_r") and b["start_r"].collidepoint(pos):
-            self.choose_starter("robot"); return
+            self.starter = "robot"
+            self.log("Startspieler: Roboter – wähle Schwierigkeit zum Starten", "info")
+            return
         if b.get("start_z") and b["start_z"].collidepoint(pos):
-            self.choose_starter("random"); return
+            self.starter = "random"
+            self.log("Startspieler: Zufall – wähle Schwierigkeit zum Starten", "info")
+            return
 
-        # Schwierigkeit – startet sofort neue Runde wenn Starter bekannt
+        # Schwierigkeit – startet sofort Runde wenn Starter bekannt
         if b.get("easy") and b["easy"].collidepoint(pos):
             self.game.set_difficulty(AI_DIFFICULTY_EASY)
             self.log("Schwierigkeit: Leicht", "info")
-            if self.starter:
-                self.reset_round()
+            if not self.starter:
+                self.starter = "human"
+                self.log("Kein Startspieler – Mensch beginnt automatisch", "info")
+            self.reset_round()
             return
         if b.get("medium") and b["medium"].collidepoint(pos):
             self.game.set_difficulty(AI_DIFFICULTY_MEDIUM)
             self.log("Schwierigkeit: Mittel", "info")
             if self.starter:
                 self.reset_round()
+            else:
+                self.log("Bitte erst Startspieler waehlen", "warn")
             return
         if b.get("hard") and b["hard"].collidepoint(pos):
             self.game.set_difficulty(AI_DIFFICULTY_HARD)
             self.log("Schwierigkeit: Schwer", "info")
             if self.starter:
                 self.reset_round()
+            else:
+                self.log("Bitte erst Startspieler waehlen", "warn")
             return
 
         # Reset-Buttons
         if b.get("new_round") and b["new_round"].collidepoint(pos):
-            self.reset_round(); return
+            self.reset_round()
+            return
         if b.get("full_rst") and b["full_rst"].collidepoint(pos):
-            self.full_reset(); return
+            self.full_reset()
+            return
 
         # Maus-Klick auf das 2D-Brett
         fid = field_from_mouse(*pos)
@@ -1060,6 +1238,9 @@ class MainApp:
         self.start_vision()
         self.log(f"Verbunden: {self.connection_label}", "ok")
         self.log("Mensch = X  |  Roboter = O", "info")
+
+        # Event-Listener starten (Digital Inputs vom DRL)
+        self._start_event_listener()
 
         running = True
         while running:
@@ -1078,6 +1259,9 @@ class MainApp:
                     elif event.key == pygame.K_F1:
                         self.full_reset()
 
+            # Pending Events aus Button-Thread verarbeiten
+            self._process_pending_events()
+
             if self.phase == self.PHASE_ROBOT_THINKING:
                 self._process_robot_turn()
 
@@ -1093,6 +1277,8 @@ class MainApp:
             pygame.display.flip()
             self.clock.tick(60)
 
+        # Aufräumen
+        self._stop_event_listener()
         self.stop_vision()
         self.socket_client.disconnect()
         pygame.quit()

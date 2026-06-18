@@ -29,7 +29,8 @@ BOARD_REGIONS = {
 
 # --- Roboter / Socket ---
 ROBOT_IP      = "192.168.137.100"
-ROBOT_PORT    = 5006
+ROBOT_PORT    = 5020
+ROBOT_EVENT_PORT = 5021
 ROBOT_TIMEOUT = 10
 
 # --- Spielfeld-Koordinaten (Roboter-Koordinatensystem, in mm) ---
@@ -82,3 +83,15 @@ FONT_LARGE  = 52
 FONT_MEDIUM = 32
 FONT_SMALL  = 22
 FONT_TINY   = 16
+# --- Digital Input Pins (am Doosan Controller) ---
+DI_PIN_HUMAN_ON   = 1   # B1 – Mensch beginnt (AN)
+DI_PIN_HUMAN_OFF  = 2   # B2 – Roboter beginnt (AUS)
+DI_PIN_EASY       = 3   # B3 – Schwierigkeit Leicht
+DI_PIN_MEDIUM     = 4   # B4 – Schwierigkeit Mittel
+DI_PIN_HARD       = 5   # B5 – Schwierigkeit Schwer
+DI_PIN_RESET      = 6   # B6 – Vollständiger Reset
+
+LONG_PRESS_SECONDS = 3.0   # Haltedauer für Zufallsmodus
+
+# --- Event-Channel ---
+   # DRL sendet Events hierüber
