@@ -709,10 +709,14 @@ class MainApp:
                 self._trigger_robot_turn()
             else:
                 self.phase = self.PHASE_PLAYING
-        elif self.game.state in ("human_won", "ai_won"):
+        elif self.game.state == "human_won":
             self.phase = self.PHASE_ROBOT_REWARDING
-            self.log("Spiel beendet – Belohnungs-Sequenz", "robot")
+            self.log("Mensch gewinnt! Starte Belohnungs-Sequenz...", "robot")
             threading.Thread(target=self._execute_reward_move, daemon=True).start()
+        elif self.game.state == "ai_won":
+            self.log("Roboter gewinnt – keine Belohnung.", "info")
+            self.phase = self.PHASE_GAME_OVER
+
         else:
             self.phase = self.PHASE_GAME_OVER
 
@@ -846,13 +850,13 @@ class MainApp:
 
         # Gewinner-Linie
         if self.game.board.winning_combo:
-            def _center(idx):
-                r, c = FIELD_MAP[idx]
-                return (BOARD_X + c * CELL + CELL // 2,
-                        BOARD_Y + r * CELL + CELL // 2)
+            def center(fid):
+                rr, cc = (fid - 1) // 3, (fid - 1) % 3
+                return (BOARD_X + cc * CELL + CELL // 2,
+                        BOARD_Y + rr * CELL + CELL // 2)
             pygame.draw.line(self.screen, GOLD,
-                             _center(self.game.board.winning_combo[0]),
-                             _center(self.game.board.winning_combo[2]), 8)
+                             center(self.game.board.winning_combo[0]),
+                             center(self.game.board.winning_combo[2]), 8)
 
         # Hover-Effekt (nur wenn Mensch am Zug)
         if self.phase == self.PHASE_PLAYING and self.game.is_human_turn():
