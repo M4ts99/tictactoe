@@ -40,8 +40,8 @@ import time
 # Netzwerk
 # -----------------------------------------------------------------------------
 HOST       = "0.0.0.0"
-PORT       = 5002 # Command-Channel (main -> DRL)
-EVENT_PORT = 5003  # Event-Channel   (DRL -> main)
+PORT       = 5004# Command-Channel (main -> DRL)
+EVENT_PORT = 5005  # Event-Channel   (DRL -> main)
 
 # -----------------------------------------------------------------------------
 # Bewegungsparameter
@@ -84,11 +84,17 @@ PUSH_POS = Global_pick
 # -----------------------------------------------------------------------------
 # Digital Input Pin-Nummern (anpassen falls Controller anders belegt)
 # -----------------------------------------------------------------------------
-DI_STARTER = 1   # B1 – Startspieler (zyklisch)
-DI_EASY    = 2   # B2 – Schwierigkeit Leicht
-DI_MEDIUM  = 3   # B3 – Schwierigkeit Mittel
-DI_HARD    = 4   # B4 – Schwierigkeit Schwer
-DI_RESET   = 5   # B5 – Vollstaendiger Reset
+# Pins
+# Pins
+DI_STARTER    = 1   # B1 – Startspieler durchklicken
+DI_DIFFICULTY = 2   # B2 – Schwierigkeit durchklicken
+DI_START      = 3   # B3 – Spiel starten
+DI_RESET      = 4   # B4 – Neue Runde / Reset
+DI_SECRET     = 5   # B5 – Geheimmodus (NEU)
+
+# Zyklen (merken wo man gerade ist)
+starter_cycle    = 0   # 0=human, 1=robot, 2=random
+difficulty_cycle = 0   # 0=easy,  1=medium, 2=hard
 
 # -----------------------------------------------------------------------------
 # Event-Channel: globaler Client-Socket
@@ -158,80 +164,67 @@ _prev_state   = {}   # {pin: bool} – letzter bekannter Zustand
 # 0 = human (Standard), 1 = robot, 2 = random
 starter_cycle = 0
 
+def geheim_sequence():
+    tp_log("GEHEIMMODUS AKTIVIERT")
+    tp_popup("Geheimmodus!")
+    try:
+        # Faehrt von GLOBAL_HOME einfach 150mm gerade nach oben
+        pos_up = posx(GLOBAL_HOME[0], GLOBAL_HOME[1], GLOBAL_HOME[2] + 150.0, GLOBAL_HOME[3], GLOBAL_HOME[4], GLOBAL_HOME[5])
+        
+        movel(pos_up, v=VEL_FAST, a=ACC_FAST)
+        wait(0.5)
+        movel(GLOBAL_HOME, v=VEL_FAST, a=ACC_FAST)
+        
+        tp_log("Geheimmodus erfolgreich")
+    except Exception as e:
+        tp_log("Geheimmodus Fehler: " + str(e))
 
 def poll_buttons_once():
-    """
-    Liest alle 5 Digital Inputs genau einmal und sendet ggf. Events.
-    Wird bei jedem socket.timeout (~1s) aufgerufen – kein eigener Loop,
-    damit der Command-Server nicht blockiert wird.
+    global _prev_state, starter_cycle, difficulty_cycle
 
-    B1 – Zyklus-Logik:
-      Jeder neue Tastendruck schaltet weiter:
-      Mensch -> Roboter -> Zufall -> Mensch -> ...
-      Standard beim Start: Mensch (cycle = 0)
-
-    B2/B3/B4/B5 – Flanken-Erkennung:
-      Event wird nur beim Uebergang OFF -> ON gesendet,
-      nicht bei gehaltenem Button.
-    """
-    global _prev_state, starter_cycle
-
-    # -------------------------------------------------------------------------
-    # B1 – Startspieler (Zyklus-Logik)
-    # -------------------------------------------------------------------------
+    # B1 – Startspieler durchklicken
     b1 = (get_digital_input(DI_STARTER) == ON)
-
     if b1 and not _prev_state.get(DI_STARTER, False):
-        # Neuer Tastendruck erkannt – Zyklus weiterschalter
         starter_cycle = (starter_cycle + 1) % 3
-
-        if starter_cycle == 0:
-            send_event("EVENT:STARTER:human")
-            tp_log("[B1] Startspieler: Mensch")
-        elif starter_cycle == 1:
-            send_event("EVENT:STARTER:robot")
-            tp_log("[B1] Startspieler: Roboter")
-        else:
-            send_event("EVENT:STARTER:random")
-            tp_log("[B1] Startspieler: Zufall")
-
+        events = ["EVENT:STARTER:human",
+                  "EVENT:STARTER:robot",
+                  "EVENT:STARTER:random"]
+        send_event(events[starter_cycle])
+        tp_log("[B1] Starter: " + ["Mensch","Roboter","Zufall"][starter_cycle])
     _prev_state[DI_STARTER] = b1
 
-    # -------------------------------------------------------------------------
-    # B2 – Schwierigkeit Leicht
-    # -------------------------------------------------------------------------
-    b2 = (get_digital_input(DI_EASY) == ON)
-    if b2 and not _prev_state.get(DI_EASY, False):
-        send_event("EVENT:DIFFICULTY:easy")
-        tp_log("[B2] Schwierigkeit: Leicht")
-    _prev_state[DI_EASY] = b2
+    # B2 – Schwierigkeit durchklicken
+    b2 = (get_digital_input(DI_DIFFICULTY) == ON)
+    if b2 and not _prev_state.get(DI_DIFFICULTY, False):
+        difficulty_cycle = (difficulty_cycle + 1) % 3
+        events = ["EVENT:DIFFICULTY:easy",
+                  "EVENT:DIFFICULTY:medium",
+                  "EVENT:DIFFICULTY:hard"]
+        send_event(events[difficulty_cycle])
+        tp_log("[B2] Schwierigkeit: " + ["Leicht","Mittel","Schwer"][difficulty_cycle])
+    _prev_state[DI_DIFFICULTY] = b2
 
-    # -------------------------------------------------------------------------
-    # B3 – Schwierigkeit Mittel
-    # -------------------------------------------------------------------------
-    b3 = (get_digital_input(DI_MEDIUM) == ON)
-    if b3 and not _prev_state.get(DI_MEDIUM, False):
-        send_event("EVENT:DIFFICULTY:medium")
-        tp_log("[B3] Schwierigkeit: Mittel")
-    _prev_state[DI_MEDIUM] = b3
+    # B3 – Spiel starten
+    b3 = (get_digital_input(DI_START) == ON)
+    if b3 and not _prev_state.get(DI_START, False):
+        send_event("EVENT:START")
+        tp_log("[B3] Spiel starten")
+    _prev_state[DI_START] = b3
 
-    # -------------------------------------------------------------------------
-    # B4 – Schwierigkeit Schwer
-    # -------------------------------------------------------------------------
-    b4 = (get_digital_input(DI_HARD) == ON)
-    if b4 and not _prev_state.get(DI_HARD, False):
-        send_event("EVENT:DIFFICULTY:hard")
-        tp_log("[B4] Schwierigkeit: Schwer")
-    _prev_state[DI_HARD] = b4
-
-    # -------------------------------------------------------------------------
-    # B5 – Reset
-    # -------------------------------------------------------------------------
-    b5 = (get_digital_input(DI_RESET) == ON)
-    if b5 and not _prev_state.get(DI_RESET, False):
+    # B4 – Reset
+# B4 – Reset
+    b4 = (get_digital_input(DI_RESET) == ON)
+    if b4 and not _prev_state.get(DI_RESET, False):
         send_event("EVENT:RESET")
-        tp_log("[B5] Reset")
-    _prev_state[DI_RESET] = b5
+        tp_log("[B4] Reset")
+    _prev_state[DI_RESET] = b4
+
+    # B5 – Geheimmodus (NEU)
+    b5 = (get_digital_input(DI_SECRET) == ON)
+    if b5 and not _prev_state.get(DI_SECRET, False):
+        tp_log("[B5] Geheimmodus ausgeloest")
+        geheim_sequence()
+    _prev_state[DI_SECRET] = b5
 
 
 # -----------------------------------------------------------------------------
@@ -341,7 +334,7 @@ def push_sequence():
     tp_log("PUSH fertig")
     return True
  
- 
+
 def push_lose_sequence():
     tp_log("PUSH_LOSE")
     try:
@@ -356,7 +349,7 @@ def push_lose_sequence():
         push_out = trans(Global_picklose, posx(200, 0, 50, 0, 0, 0))
         movel(push_out, v=VEL_SLOW, a=ACC_SLOW)
  
-        wait(10.0)
+        wait(5.0)
  
         movel(up50, v=VEL_SLOW, a=ACC_SLOW)
  
