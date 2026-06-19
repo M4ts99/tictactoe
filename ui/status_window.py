@@ -2,14 +2,15 @@
 # ui/status_window.py – Zweites Statusfenster (Tkinter)
 #
 # Zeigt in einem separaten Fenster:
-#   - Logo (logo.png) und "Schlag den Cobot"
+#   - Header-Balken (Dunkelgrün) mit Logo und Titel
 #   - Großer Status-Text (Wer ist dran, Gewinner, etc.)
 #   - Startspieler-Buttons (Mensch / Roboter / Zufall)
 #   - Schwierigkeits-Buttons (Leicht / Mittel / Schwer)
+#   - Footer-Balken (Dunkelgrün)
 #
-# Weiß-Grünes Design:
-#   - Konfigurierbarer Grünton am Anfang der Klasse
-#   - Modernes Flat-Design für Buttons
+# Design:
+#   - Inaktive Buttons: Grün mit weißer Schrift
+#   - Aktive Buttons: Schwarz mit weißer Schrift
 # =============================================================================
 from __future__ import annotations
 
@@ -18,53 +19,42 @@ import threading
 import tkinter as tk
 from typing import Callable
 
-# Pillow für transparente PNGs (graceful fallback falls nicht installiert)
+# Pillow für transparente PNGs
 try:
     from PIL import Image, ImageTk
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
 
+# Hilfsfunktion: Macht aus RGB den von Tkinter benötigten Hex-Code
+def rgb_to_hex(r: int, g: int, b: int) -> str:
+    return f"#{int(r):02x}{int(g):02x}{int(b):02x}"
+
 
 class StatusWindow:
-    """
-    Zweites Fenster mit Tkinter.
-    Wird in einem eigenen Thread gestartet damit pygame nicht blockiert wird.
-
-    Callbacks:
-        on_starter(str)     – "human" | "robot" | "random"
-        on_difficulty(str)  – "easy"  | "medium" | "hard"
-    """
-
     # ------------------------------------------------------------------
-    # FARBPALETTE (Weiß / Grün)
+    # FARBPALETTE (Angepasst auf dein Dunkelgrün)
     # ------------------------------------------------------------------
-    # HIER DEN GEWÜNSCHTEN GRÜNTON EINTRAGEN:
-    C_MAIN_GREEN    = "#2596be"    # Modernes, frisches Grün (z.B. Doosan-ähnlich)
-    C_GREEN_HOVER   = "#66bb6a"    # Etwas helleres Grün für Hover-Effekte
+    #                                           R    G    B
+    C_MAIN_GREEN  = rgb_to_hex(26,  62,  46 )  # Dein dunkles Wunsch-Grün
+    C_GREEN_HOVER = rgb_to_hex(46,  82,  66 )  # Etwas heller für Hover-Effekt
     
-    C_BG            = "#ffffff"    # Reines Weiß für den Hintergrund
-    C_TEXT          = "#2b2b2b"    # Dunkelgrau für Lesbarkeit (statt hartem Schwarz)
-    C_DIM           = "#757575"    # Mittleres Grau für Beschriftungen
-    C_LINE          = "#e0e0e0"    # Sehr helles Grau für Trennlinien
-    C_BTN           = "#f5f5f5"    # Sehr helles Grau für inaktive Buttons
-    C_BTN_HOV       = "#eeeeee"    # Etwas dunkleres Grau für inaktiven Button-Hover
-
-    C_ACT_FG        = "#ffffff"    # Weiße Schrift auf grünem (aktivem) Button
-
-    # Statusfarben (angepasst an hellen Hintergrund)
-    C_YELLOW        = "#f57f17"    # Dunkleres Gelb/Orange
-    C_BLUE          = "#1976d2"    # Modernes Blau
-    C_RED           = "#d32f2f"    # Modernes Rot
-    C_GOLD          = "#fbc02d"    # Gold
-    C_CYAN          = "#0097a7"
-    C_GREY          = "#616161"
+    C_BLACK       = rgb_to_hex(88, 224, 163)  # Schwarz für aktive Buttons
+    C_WHITE       = rgb_to_hex(255, 255, 255)  # Weiß (Hintergrund & Text)
+    
+    C_TEXT_DARK   = rgb_to_hex(43,  43,  43 )  # Dunkelgrau für Beschriftungen
+    C_LINE        = rgb_to_hex(224, 224, 224)  # Linien
+    
+    # Statusfarben
+    C_YELLOW      = rgb_to_hex(245, 127, 23 )
+    C_BLUE        = rgb_to_hex(25,  118, 210)
+    C_RED         = rgb_to_hex(211, 47,  47 )
 
     # ------------------------------------------------------------------
     # Basis-Schriftgrößen (werden bei Resize skaliert)
     # ------------------------------------------------------------------
     BASE_W = 560
-    BASE_H = 620  # Etwas höher für Logo und Extra-Titel
+    BASE_H = 650
 
     def __init__(self,
                  on_starter:    Callable[[str], None],
@@ -96,12 +86,11 @@ class StatusWindow:
         self._lbl_starter: tk.Label  | None = None
         self._lbl_diff:    tk.Label  | None = None
         self._lbl_title:   tk.Label  | None = None
-        self._lbl_cobot:   tk.Label  | None = None
         self._lbl_footer:  tk.Label  | None = None
         self._btn_fs:      tk.Button | None = None
         self._logo_lbl:    tk.Label  | None = None
 
-        self._tk_image = None  # Referenz für das Bild halten (Garbage Collection)
+        self._tk_image = None  
 
         self._starter_frame: tk.Frame | None = None
         self._diff_frame:    tk.Frame | None = None
@@ -127,12 +116,8 @@ class StatusWindow:
     def is_running(self) -> bool:
         return self._running and self._thread is not None and self._thread.is_alive()
 
-    # ------------------------------------------------------------------
-    # Öffentliche Update-Methoden
-    # ------------------------------------------------------------------
     def set_status(self, text: str, color: str | None = None):
         with self._pending_lock:
-            # Wenn keine Farbe angegeben, Standard-Grün nutzen
             self._pending_status = (text, color or self.C_MAIN_GREEN)
 
     def set_starter(self, starter: str | None):
@@ -153,10 +138,10 @@ class StatusWindow:
     # ------------------------------------------------------------------
     def _run_tk(self):
         self._root = tk.Tk()
-        self._root.title("Schlag den Cobot – Status")
-        self._root.configure(bg=self.C_BG)
+        self._root.title("TicTacToe – Status")
+        self._root.configure(bg=self.C_WHITE)
         self._root.resizable(True, True)
-        self._root.minsize(400, 450)
+        self._root.minsize(400, 480)
 
         w, h = self.BASE_W, self.BASE_H
         self._root.geometry(f"{w}x{h}+20+20")
@@ -198,29 +183,32 @@ class StatusWindow:
     # ------------------------------------------------------------------
     def _build(self):
         root = self._root
-        outer = tk.Frame(root, bg=self.C_BG)
+        outer = tk.Frame(root, bg=self.C_WHITE)
         outer.pack(fill="both", expand=True)
 
-        # ── Vollbild-Button ──────────────────────────────────────────
+        # ── HEADER (Dunkelgrüner Balken oben) ──────────────────────────
+        header_frame = tk.Frame(outer, bg=self.C_MAIN_GREEN)
+        header_frame.pack(fill="x", side="top")
+
+        # Vollbild-Button im Header (Farben umgekehrt, da Hintergrund dunkel ist)
         self._btn_fs = tk.Button(
-            outer, text="⛶  Vollbild  [F]",
+            header_frame, text="⛶  Vollbild  [F]",
             command=self._toggle_fullscreen,
-            bg=self.C_BG, fg=self.C_DIM,
-            activebackground=self.C_BTN_HOV, activeforeground=self.C_TEXT,
+            bg=self.C_MAIN_GREEN, fg=self.C_WHITE,
+            activebackground=self.C_GREEN_HOVER, activeforeground=self.C_WHITE,
             relief="flat", bd=0,
             font=("Segoe UI", 9),
             cursor="hand2", padx=8, pady=4
         )
         self._btn_fs.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
 
-        # ── Logo laden (falls vorhanden) ─────────────────────────────
+        # Logo laden
         logo_path = "logo.png"
         if os.path.exists(logo_path):
             if HAS_PIL:
                 try:
                     img = Image.open(logo_path)
-                    # Bild skalieren (z.B. auf 150px Breite, Höhe proportional)
-                    basewidth = 150
+                    basewidth = 200
                     wpercent = (basewidth / float(img.size[0]))
                     hsize = int((float(img.size[1]) * float(wpercent)))
                     img = img.resize((basewidth, hsize), Image.Resampling.LANCZOS)
@@ -230,55 +218,49 @@ class StatusWindow:
             else:
                 try:
                     self._tk_image = tk.PhotoImage(file=logo_path)
-                    # Einfacher Subsample falls Bild zu groß ist (native tk-Lösung)
-                    self._tk_image = self._tk_image.subsample(3, 3) 
+                    self._tk_image = self._tk_image.subsample(2, 2) 
                 except Exception as e:
                     print(f"[UI] Fehler beim tk.PhotoImage Logo-Laden: {e}")
 
         if self._tk_image:
-            self._logo_lbl = tk.Label(outer, image=self._tk_image, bg=self.C_BG)
+            self._logo_lbl = tk.Label(header_frame, image=self._tk_image, bg=self.C_MAIN_GREEN)
             self._logo_lbl.pack(pady=(20, 0))
         else:
-            # Platzhalter falls kein Bild da ist
-            tk.Frame(outer, bg=self.C_BG, height=20).pack()
+            tk.Frame(header_frame, bg=self.C_MAIN_GREEN, height=20).pack()
 
-        # ── Titel "Schlag den Cobot" ──────────────────────────────────
-        self._lbl_cobot = tk.Label(
-            outer, text="SCHLAG DEN COBOT",
-            bg=self.C_BG, fg=self.C_MAIN_GREEN,
-            font=("Segoe UI", 20, "bold")
-        )
-        self._lbl_cobot.pack(pady=(5, 0))
-
+        # Titel unter Logo (weiße Schrift auf grünem Grund)
         self._lbl_title = tk.Label(
-            outer, text="TicTacToe – Doosan M1013",
-            bg=self.C_BG, fg=self.C_DIM,
-            font=("Segoe UI", 11)
+            header_frame, text="TicTacToe – Doosan M1013",
+            bg=self.C_MAIN_GREEN, fg=self.C_WHITE,
+            font=("Segoe UI", 12, "bold")
         )
-        self._lbl_title.pack(pady=(0, 10))
+        self._lbl_title.pack(pady=(10, 15))
 
-        tk.Frame(outer, bg=self.C_LINE, height=1).pack(fill="x", padx=40, pady=(0, 10))
 
-        # ── Großer Status-Text ────────────────────────────────────────
+        # ── CONTENT (Weißer Bereich in der Mitte) ─────────────────────
+        content_frame = tk.Frame(outer, bg=self.C_WHITE)
+        content_frame.pack(fill="both", expand=True, pady=10)
+
+        # Großer Status-Text
         self._status_lbl = tk.Label(
-            outer, text="Wer fängt an?",
-            bg=self.C_BG, fg=self.C_MAIN_GREEN,
+            content_frame, text="Wer fängt an?",
+            bg=self.C_WHITE, fg=self.C_MAIN_GREEN,
             font=("Segoe UI", 36, "bold"),
             wraplength=500, justify="center"
         )
-        self._status_lbl.pack(pady=(10, 10), padx=24, expand=True, fill="both")
+        self._status_lbl.pack(pady=(15, 10), padx=24, expand=True, fill="both")
 
-        tk.Frame(outer, bg=self.C_LINE, height=1).pack(fill="x", padx=40, pady=(0, 15))
+        tk.Frame(content_frame, bg=self.C_LINE, height=1).pack(fill="x", padx=40, pady=(0, 15))
 
-        # ── Startspieler ──────────────────────────────────────────────
+        # Startspieler
         self._lbl_starter = tk.Label(
-            outer, text="Wer fängt an?  [B1]",
-            bg=self.C_BG, fg=self.C_DIM,
+            content_frame, text="Wer fängt an?  [B1]",
+            bg=self.C_WHITE, fg=self.C_TEXT_DARK,
             font=("Segoe UI", 11, "bold")
         )
         self._lbl_starter.pack(anchor="w", padx=40)
 
-        self._starter_frame = tk.Frame(outer, bg=self.C_BG)
+        self._starter_frame = tk.Frame(content_frame, bg=self.C_WHITE)
         self._starter_frame.pack(fill="x", padx=36, pady=(6, 0))
 
         self._btn_human  = self._make_btn(
@@ -291,17 +273,17 @@ class StatusWindow:
         for btn in (self._btn_human, self._btn_robot, self._btn_random):
             btn.pack(side="left", expand=True, fill="x", padx=4)
 
-        tk.Frame(outer, bg=self.C_LINE, height=1).pack(fill="x", padx=40, pady=(20, 15))
+        tk.Frame(content_frame, bg=self.C_LINE, height=1).pack(fill="x", padx=40, pady=(20, 15))
 
-        # ── Schwierigkeit ──────────────────────────────────────────────
+        # Schwierigkeit
         self._lbl_diff = tk.Label(
-            outer, text="Schwierigkeit wählen  [B2]",
-            bg=self.C_BG, fg=self.C_DIM,
+            content_frame, text="Schwierigkeit wählen  [B2]",
+            bg=self.C_WHITE, fg=self.C_TEXT_DARK,
             font=("Segoe UI", 11, "bold")
         )
         self._lbl_diff.pack(anchor="w", padx=40)
 
-        self._diff_frame = tk.Frame(outer, bg=self.C_BG)
+        self._diff_frame = tk.Frame(content_frame, bg=self.C_WHITE)
         self._diff_frame.pack(fill="x", padx=36, pady=(6, 0))
 
         self._btn_easy   = self._make_btn(
@@ -314,54 +296,50 @@ class StatusWindow:
         for btn in (self._btn_easy, self._btn_medium, self._btn_hard):
             btn.pack(side="left", expand=True, fill="x", padx=4)
 
-        # ── Fußzeile ───────────────────────────────────────────────────
-        tk.Frame(outer, bg=self.C_LINE, height=1).pack(fill="x", padx=40, pady=(25, 0))
+        # Abstand nach unten im Content-Bereich
+        tk.Frame(content_frame, bg=self.C_WHITE, height=20).pack()
+
+
+        # ── FOOTER (Dunkelgrüner Balken unten) ─────────────────────────
+        footer_frame = tk.Frame(outer, bg=self.C_MAIN_GREEN)
+        footer_frame.pack(fill="x", side="bottom")
+
         self._lbl_footer = tk.Label(
-            outer, text="Mensch = X   |   Roboter = O",
-            bg=self.C_BG, fg=self.C_DIM,
-            font=("Segoe UI", 10)
+            footer_frame, text="Mensch = X   |   Roboter = O",
+            bg=self.C_MAIN_GREEN, fg=self.C_WHITE,
+            font=("Segoe UI", 10, "bold")
         )
-        self._lbl_footer.pack(pady=(12, 20))
+        self._lbl_footer.pack(pady=(12, 12))
 
     # ------------------------------------------------------------------
-    # Button-Fabrik (Modernes, flaches Design)
+    # Button-Fabrik
     # ------------------------------------------------------------------
     def _make_btn(self, parent: tk.Frame, text: str, cmd, group: str) -> tk.Button:
-        # Ein Rahmen um den Button für einen leichten Border-Effekt
-        border_frame = tk.Frame(parent, bg=self.C_LINE, padx=1, pady=1)
-        
         btn = tk.Button(
-            border_frame, text=text, command=cmd,
-            bg=self.C_BTN, fg=self.C_TEXT,
-            activebackground=self.C_BTN_HOV,
-            activeforeground=self.C_TEXT,
+            parent, text=text, command=cmd,
+            bg=self.C_MAIN_GREEN, fg=self.C_WHITE,      # Standard: Grün mit weißer Schrift
+            activebackground=self.C_GREEN_HOVER,        # Beim Klicken
+            activeforeground=self.C_WHITE,
             relief="flat", bd=0,
             font=("Segoe UI", 13, "bold"),
             cursor="hand2",
             padx=10, pady=12
         )
-        btn.pack(expand=True, fill="both")
-        
         btn.bind("<Enter>", lambda e, b=btn, g=group: self._on_hover(b, g, True))
         btn.bind("<Leave>", lambda e, b=btn, g=group: self._on_hover(b, g, False))
-        
-        # Speichere die Referenz zum Border-Frame im Button, 
-        # damit wir die Border-Farbe später ändern können
-        btn.border_frame = border_frame 
         return btn
 
     def _on_hover(self, btn: tk.Button, group: str, entering: bool):
         is_active = self._is_active(btn, group)
-        if entering:
-            if not is_active:
-                btn.config(bg=self.C_BTN_HOV)
-            else:
-                btn.config(bg=self.C_GREEN_HOVER)
+        if is_active:
+            # Button ist ausgewählt -> bleibt schwarz
+            btn.config(bg=self.C_BLACK, fg=self.C_WHITE)
         else:
-            if not is_active:
-                btn.config(bg=self.C_BTN)
+            # Button ist NICHT ausgewählt -> Grün-Logik
+            if entering:
+                btn.config(bg=self.C_GREEN_HOVER, fg=self.C_WHITE)
             else:
-                btn.config(bg=self.C_MAIN_GREEN)
+                btn.config(bg=self.C_MAIN_GREEN, fg=self.C_WHITE)
 
     def _is_active(self, btn: tk.Button, group: str) -> bool:
         if group == "starter":
@@ -380,33 +358,29 @@ class StatusWindow:
         self._apply_highlight_diff(value)
 
     # ------------------------------------------------------------------
-    # Highlight-Logik
+    # Highlight-Logik (Schwarz = Aktiv / Grün = Inaktiv)
     # ------------------------------------------------------------------
     def _apply_highlight_starter(self, active: str | None):
         self._active_starter = active
         mapping = {"human": self._btn_human, "robot": self._btn_robot, "random": self._btn_random}
         for key, btn in mapping.items():
-            if btn is None:
-                continue
+            if btn is None: continue
+            
             if key == active:
-                btn.config(bg=self.C_MAIN_GREEN, fg=self.C_ACT_FG)
-                btn.border_frame.config(bg=self.C_MAIN_GREEN) # Grüner Border
+                btn.config(bg=self.C_BLACK, fg=self.C_WHITE)
             else:
-                btn.config(bg=self.C_BTN, fg=self.C_TEXT)
-                btn.border_frame.config(bg=self.C_LINE)       # Grauer Border
+                btn.config(bg=self.C_MAIN_GREEN, fg=self.C_WHITE)
 
     def _apply_highlight_diff(self, active: str | None):
         self._active_diff = active
         mapping = {"easy": self._btn_easy, "medium": self._btn_medium, "hard": self._btn_hard}
         for key, btn in mapping.items():
-            if btn is None:
-                continue
+            if btn is None: continue
+            
             if key == active:
-                btn.config(bg=self.C_MAIN_GREEN, fg=self.C_ACT_FG)
-                btn.border_frame.config(bg=self.C_MAIN_GREEN)
+                btn.config(bg=self.C_BLACK, fg=self.C_WHITE)
             else:
-                btn.config(bg=self.C_BTN, fg=self.C_TEXT)
-                btn.border_frame.config(bg=self.C_LINE)
+                btn.config(bg=self.C_MAIN_GREEN, fg=self.C_WHITE)
 
     # ------------------------------------------------------------------
     # Resize – Schriftgröße skalieren
@@ -420,15 +394,12 @@ class StatusWindow:
         scale = min(w / self.BASE_W, h / self.BASE_H)
         scale = max(0.6, min(scale, 3.0))
 
-        size_cobot  = max(16, int(20 * scale))
         size_status = max(18, int(36 * scale))
         size_btn    = max(10, int(13 * scale))
         size_label  = max(9,  int(11 * scale))
-        size_title  = max(9,  int(11 * scale))
+        size_title  = max(9,  int(12 * scale))
         size_footer = max(8,  int(10 * scale))
 
-        if self._lbl_cobot:
-            self._lbl_cobot.config(font=("Segoe UI", size_cobot, "bold"))
         if self._status_lbl:
             self._status_lbl.config(
                 font=("Segoe UI", size_status, "bold"),
@@ -443,9 +414,9 @@ class StatusWindow:
             if lbl:
                 lbl.config(font=("Segoe UI", size_label, "bold"))
         if self._lbl_title:
-            self._lbl_title.config(font=("Segoe UI", size_title))
+            self._lbl_title.config(font=("Segoe UI", size_title, "bold"))
         if self._lbl_footer:
-            self._lbl_footer.config(font=("Segoe UI", size_footer))
+            self._lbl_footer.config(font=("Segoe UI", size_footer, "bold"))
 
     # ------------------------------------------------------------------
     # Poll-Schleife (verarbeitet pending Updates im TK-Thread)
