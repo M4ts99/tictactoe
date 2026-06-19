@@ -25,6 +25,7 @@ import random
 import threading
 import time
 from dataclasses import dataclass, field
+import os
 
 import cv2
 import numpy as np
@@ -492,7 +493,53 @@ class MainApp:
             on_starter    = self._on_status_win_starter,
             on_difficulty = self._on_status_win_difficulty,
         )
+# Zweites Status-Fenster (Tkinter)
+        self._status_win = StatusWindow(
+            on_starter    = self._on_status_win_starter,
+            on_difficulty = self._on_status_win_difficulty,
+        )
 
+        # ------------------------------------------------------------------
+        # NEU: Audio-System initialisieren
+        # ------------------------------------------------------------------
+        pygame.mixer.init()
+        self.sounds = {}
+        sound_files = {
+            "gewinner":  "sounds/gewinner.wav",
+            "verlierer": "sounds/verlierer.wav",
+            "countdown": "sounds/countdown.wav",
+            "human":     "sounds/mensch.wav",
+            "robot":     "sounds/roboter.wav",
+            "random":    "sounds/zufall.wav",
+            AI_DIFFICULTY_EASY:   "sounds/leicht.wav",
+            AI_DIFFICULTY_MEDIUM: "sounds/mittel.wav",
+            AI_DIFFICULTY_HARD:   "sounds/schwer.wav"
+        }
+        
+        for key, path in sound_files.items():
+            if os.path.exists(path):
+                try:
+                    self.sounds[key] = pygame.mixer.Sound(path)
+                except Exception as e:
+                    self.log(f"Fehler beim Laden von {path}: {e}", "warn")
+            else:
+                self.log(f"Sounddatei nicht gefunden (ignoriert): {path}", "warn")
+
+    # ------------------------------------------------------------------
+    # NEU: Sound Hilfsmethoden (Direkt unter die __init__ einfügen)
+    # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+    # NEU: Sound Hilfsmethoden
+    # ------------------------------------------------------------------
+    def play_sound(self, sound_key):
+        """Spielt einen Sound ab und bricht alle vorherigen ab."""
+        if sound_key in self.sounds:
+            pygame.mixer.stop()  # <-- Diese Zeile stoppt alle aktuell laufenden Sounds
+            self.sounds[sound_key].play()
+
+    def play_sound_delayed(self, sound_key, delay_seconds):
+        """Spielt einen Sound nach x Sekunden ab (blockiert nicht)."""
+        threading.Timer(delay_seconds, self.play_sound, args=(sound_key,)).start()
 
     # ------------------------------------------------------------------
     # Log
@@ -649,7 +696,9 @@ class MainApp:
             return
 
         # --- B2: Schwierigkeit (setzt nur den Wert, startet NICHT das Spiel) ---
+# --- B2: Schwierigkeit (setzt nur den Wert, startet NICHT das Spiel) ---
         if do_difficulty is not None:
+            self.play_sound(do_difficulty)  # <-- NEU: Sound abspielen
             diff_label = {
                 AI_DIFFICULTY_EASY:   "Leicht",
                 AI_DIFFICULTY_MEDIUM: "Mittel",
@@ -660,6 +709,7 @@ class MainApp:
 
         # --- B1: Starter ---
         if do_starter is not None:
+            self.play_sound(do_starter)  # <-- NEU: Sound abspielen
             self.starter = do_starter
             label = {"human": "Mensch", "robot": "Roboter",
                      "random": "Zufall"}.get(do_starter, do_starter)
@@ -907,15 +957,25 @@ class MainApp:
         elif self.game.state == "human_won":
             self.phase = self.PHASE_ROBOT_REWARDING
             self.log("Mensch gewinnt! Starte Belohnungs-Sequenz...", "robot")
+            
+            # --- NEU: Sounds abspielen ---
+            self.play_sound("gewinner")
+            self.play_sound_delayed("countdown", 8.0)
+            # -----------------------------
+            
             threading.Thread(target=self._execute_reward_move, daemon=True).start()
         elif self.game.state == "ai_won":
             self.phase = self.PHASE_ROBOT_REWARDING
             self.log("Roboter gewinnt – starte Fake-Belohnung...", "robot")
+            
+            # --- NEU: Sounds abspielen ---
+            self.play_sound("verlierer")
+            self.play_sound_delayed("countdown", 8.0)
+            # -----------------------------
+            
             threading.Thread(target=self._execute_lose_move, daemon=True).start()
-
         else:
             self.phase = self.PHASE_GAME_OVER
-
     # ------------------------------------------------------------------
     # Mensch-Zug (Maus oder Kamera)
     # ------------------------------------------------------------------

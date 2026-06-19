@@ -203,7 +203,7 @@ class StatusWindow:
         self._btn_fs.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
 
         # Logo laden
-        logo_path = "logo.png"
+        logo_path = "logo.jpg"
         if os.path.exists(logo_path):
             if HAS_PIL:
                 try:
