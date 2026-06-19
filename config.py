@@ -29,8 +29,8 @@ BOARD_REGIONS = {
 
 # --- Roboter / Socket ---
 ROBOT_IP      = "192.168.137.100"
-ROBOT_PORT    = 5020
-ROBOT_EVENT_PORT = 5021
+ROBOT_PORT    = 5002
+ROBOT_EVENT_PORT = 5003
 ROBOT_TIMEOUT = 10
 
 # --- Spielfeld-Koordinaten (Roboter-Koordinatensystem, in mm) ---

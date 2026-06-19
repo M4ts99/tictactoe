@@ -19,6 +19,7 @@
 #   B5 – Vollständiger Reset   → alle Einstellungen löschen, Roboter → HOME
 # =============================================================================
 from __future__ import annotations
+from ui.status_window import StatusWindow
 
 import random
 import threading
@@ -486,6 +487,12 @@ class MainApp:
 
         # Event-Listener (DRL → PC, Port 5007)
         self._event_listener: EventListener | None = None
+        # Zweites Status-Fenster (Tkinter)
+        self._status_win = StatusWindow(
+            on_starter    = self._on_status_win_starter,
+            on_difficulty = self._on_status_win_difficulty,
+        )
+
 
     # ------------------------------------------------------------------
     # Log
@@ -532,11 +539,60 @@ class MainApp:
             self.log("Button-Listener aktiv (Port 5007)", "ok")
         else:
             self.log("Button-Listener nicht verbunden – physische Buttons deaktiviert", "warn")
+    def _update_status_window(self):
+        """Synchronisiert das zweite Fenster mit dem aktuellen Spielzustand."""
+        if not hasattr(self, '_status_win'):
+            return
+        phase = self.phase
+        state = self.game.state
+
+        if phase == self.PHASE_SELECT_STARTER:
+            self._status_win.set_status("Wer fängt an?", "#f0c846")
+        elif phase == self.PHASE_ROBOT_THINKING:
+            self._status_win.set_status("Roboter denkt...", "#6499ff")
+        elif phase == self.PHASE_ROBOT_MOVING:
+            self._status_win.set_status("Roboter fährt...", "#6499ff")
+        elif phase == self.PHASE_ROBOT_REWARDING:
+            self._status_win.set_status("Belohnung läuft...", "#ffd700")
+        elif state == "human_won":
+            self._status_win.set_status("Du hast gewonnen!", "#ffd700")
+        elif state == "ai_won":
+            self._status_win.set_status("Roboter gewinnt!", "#50b4dc")
+        elif state == "draw":
+            self._status_win.set_status("Unentschieden!", "#82829b")
+        elif self.game.is_human_turn():
+            self._status_win.set_status("Dein Zug!", "#dc5050")
+        else:
+            self._status_win.set_status("Roboter am Zug", "#50b4dc")
+            # Aktive Auswahl im Status-Fenster markieren
+        self._status_win.set_starter(self.starter)
+        diff_map_rev = {
+            AI_DIFFICULTY_EASY:   "easy",
+            AI_DIFFICULTY_MEDIUM: "medium",
+            AI_DIFFICULTY_HARD:   "hard",
+        }
+        self._status_win.set_difficulty(diff_map_rev.get(self.game.difficulty))
+
 
     def _stop_event_listener(self):
         if self._event_listener:
             self._event_listener.stop()
             self._event_listener = None
+    def _on_status_win_starter(self, value: str):
+        """Callback vom zweiten Fenster – Startspieler-Button gedrückt."""
+        with self._pending_lock:
+            self._pending_starter = value
+
+    def _on_status_win_difficulty(self, value: str):
+        """Callback vom zweiten Fenster – Schwierigkeits-Button gedrückt."""
+        from config import AI_DIFFICULTY_EASY, AI_DIFFICULTY_MEDIUM, AI_DIFFICULTY_HARD
+        diff_map = {
+            "easy":   AI_DIFFICULTY_EASY,
+            "medium": AI_DIFFICULTY_MEDIUM,
+            "hard":   AI_DIFFICULTY_HARD,
+        }
+        with self._pending_lock:
+            self._pending_difficulty = diff_map.get(value)
 
     def _on_button_event(self, event_str: str):
         """
@@ -709,6 +765,9 @@ class MainApp:
         self._reset_vision_state()
         self.robot_controller.reset_counters()
         self.starter = None
+        if hasattr(self, '_status_win'):
+            self._status_win.clear_selection()
+        
         self.phase   = self.PHASE_SELECT_STARTER
         self.log("Alles zurueckgesetzt", "info")
 
@@ -832,6 +891,19 @@ class MainApp:
             self.log("PUSH fehlgeschlagen", "error")
             self._send_home_async()
         self.phase = self.PHASE_GAME_OVER
+    def _execute_lose_move(self):
+        """Laeuft im Hintergrund-Thread: PUSH_LOSE → GAME_OVER."""
+        self.log("Sende PUSH_LOSE (Fake-Belohnung)", "robot")
+        ok = (self.robot_controller.push_lose()
+            if self.robot_connected
+            else self._simulate_delay(1.0))
+        if ok:
+            self.log("Fake-Belohnung ausgegeben!", "ok")
+        else:
+            self.log("PUSH_LOSE fehlgeschlagen", "error")
+            self._send_home_async()
+        self.phase = self.PHASE_GAME_OVER
+        
 
     def _robot_error_recovery(self, reason: str):
         """Bei Fehler: HOME fahren und Runde neu starten."""
@@ -869,8 +941,10 @@ class MainApp:
             self.log("Mensch gewinnt! Starte Belohnungs-Sequenz...", "robot")
             threading.Thread(target=self._execute_reward_move, daemon=True).start()
         elif self.game.state == "ai_won":
-            self.log("Roboter gewinnt – keine Belohnung.", "info")
-            self.phase = self.PHASE_GAME_OVER
+            self.phase = self.PHASE_ROBOT_REWARDING
+            self.log("Roboter gewinnt – starte Fake-Belohnung...", "robot")
+            threading.Thread(target=self._execute_lose_move, daemon=True).start()
+
         else:
             self.phase = self.PHASE_GAME_OVER
 
@@ -1236,6 +1310,9 @@ class MainApp:
     # ------------------------------------------------------------------
     def run(self):
         self.start_vision()
+        # Zweites Fenster starten
+        self._status_win.start()
+
         self.log(f"Verbunden: {self.connection_label}", "ok")
         self.log("Mensch = X  |  Roboter = O", "info")
 
@@ -1261,6 +1338,7 @@ class MainApp:
 
             # Pending Events aus Button-Thread verarbeiten
             self._process_pending_events()
+            self._update_status_window()   # ← nach _process_pending_events()
 
             if self.phase == self.PHASE_ROBOT_THINKING:
                 self._process_robot_turn()
@@ -1281,6 +1359,8 @@ class MainApp:
         self._stop_event_listener()
         self.stop_vision()
         self.socket_client.disconnect()
+        self._status_win.stop()
+
         pygame.quit()
 
 

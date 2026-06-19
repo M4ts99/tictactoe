@@ -40,16 +40,16 @@ import time
 # Netzwerk
 # -----------------------------------------------------------------------------
 HOST       = "0.0.0.0"
-PORT       = 5020   # Command-Channel (main -> DRL)
-EVENT_PORT = 5021   # Event-Channel   (DRL -> main)
+PORT       = 5002 # Command-Channel (main -> DRL)
+EVENT_PORT = 5003  # Event-Channel   (DRL -> main)
 
 # -----------------------------------------------------------------------------
 # Bewegungsparameter
 # -----------------------------------------------------------------------------
-VEL_FAST = 150
-ACC_FAST = 150
-VEL_SLOW = 60
-ACC_SLOW = 60
+VEL_FAST = 300
+ACC_FAST = 300
+VEL_SLOW = 200
+ACC_SLOW = 200
 
 APPROACH_Z    = 60.0
 PUSH_DISTANCE = 80.0
@@ -282,15 +282,13 @@ def pick_sequence(stone_type, idx):
     movel(approach(pos), v=VEL_FAST, a=ACC_FAST)
     tp_log("PICK fertig")
     return True
-
-
 def place_sequence(field_id):
     """Faehrt zu Feld field_id und legt ab."""
     pos = PLACE_POSITIONS.get(field_id)
     if pos is None:
         tp_log("FEHLER: Unbekanntes Feld " + str(field_id))
         return False
-
+ 
     tp_log("PLACE Feld " + str(field_id))
     movel(approach(pos), v=VEL_FAST, a=ACC_FAST)
     movel(pos, v=VEL_SLOW, a=ACC_SLOW)
@@ -308,35 +306,71 @@ def place_sequence(field_id):
     tp_log("PLACE fertig")
     return True
 
-
 def push_sequence():
-    """Faehrt zur Vorposition, wartet, und fuehrt dann die definierte Sequenz aus."""
     tp_log("PUSH")
-
     try:
-        movel(Global_prepick, v=VEL_FAST, a=ACC_FAST)
-        movel(Global_prepick2, v=VEL_FAST, a=ACC_FAST)
-        movel(Global_pick, v=VEL_FAST, a=ACC_FAST)
-
-        target = posx(Global_pick[0], Global_pick[1], Global_pick[2] + 200.0,
-                      Global_pick[3], Global_pick[4], Global_pick[5])
-        movel(target, v=VEL_SLOW, a=ACC_SLOW)
-
+        # 200mm über Pick anfahren
+        above = trans(Global_pick, posx(0, 0, 200, 0, 0, 0))
+        movel(above, v=VEL_FAST, a=ACC_FAST)
+ 
+        # Zur Pick-Position
+        movel(Global_pick, v=VEL_SLOW, a=ACC_SLOW)
+ 
+        # 50mm hoch
+        up50 = trans(Global_pick, posx(0, 0, 50, 0, 0, 0))
+        movel(up50, v=VEL_SLOW, a=ACC_SLOW)
+ 
+        # 100mm positive X
+        push_out = trans(Global_pick, posx(200, 0, 50, 0, 0, 0))
+        movel(push_out, v=VEL_SLOW, a=ACC_SLOW)
+ 
         wait(10.0)
-
-        movel(Global_prepick2, v=VEL_FAST, a=ACC_FAST)
-
+ 
+        # 100mm zurück
+        movel(up50, v=VEL_SLOW, a=ACC_SLOW)
+ 
         set_digital_output(13, ON)
         wait(0.1)
         set_digital_output(13, OFF)
-
+ 
     except Exception as e:
         tp_log("PUSH Fehler: " + str(e))
+        tp_popup("PUSH FEHLER:\n" + str(e))
         return False
-
+ 
     tp_log("PUSH fertig")
     return True
-
+ 
+ 
+def push_lose_sequence():
+    tp_log("PUSH_LOSE")
+    try:
+        above = trans(Global_picklose, posx(0, 0, 200, 0, 0, 0))
+        movel(above, v=VEL_FAST, a=ACC_FAST)
+ 
+        movel(Global_picklose, v=VEL_SLOW, a=ACC_SLOW)
+ 
+        up50 = trans(Global_picklose, posx(0, 0, 50, 0, 0, 0))
+        movel(up50, v=VEL_SLOW, a=ACC_SLOW)
+ 
+        push_out = trans(Global_picklose, posx(200, 0, 50, 0, 0, 0))
+        movel(push_out, v=VEL_SLOW, a=ACC_SLOW)
+ 
+        wait(10.0)
+ 
+        movel(up50, v=VEL_SLOW, a=ACC_SLOW)
+ 
+        set_digital_output(13, ON)
+        wait(0.1)
+        set_digital_output(13, OFF)
+ 
+    except Exception as e:
+        tp_log("PUSH_LOSE Fehler: " + str(e))
+        tp_popup("PUSH_LOSE FEHLER:\n" + str(e))
+        return False
+ 
+    tp_log("PUSH_LOSE fertig")
+    return True
 # -----------------------------------------------------------------------------
 # Befehlsverarbeitung
 # -----------------------------------------------------------------------------
@@ -391,6 +425,12 @@ def process_command(line):
         if ok:
             go_home()
         return ok
+    elif action == "PUSH_LOSE":
+        ok = push_lose_sequence()
+        if ok:
+            go_home()
+        return ok
+
 
     elif action == "HOME":
         go_home()
@@ -419,7 +459,7 @@ def main():
     except Exception:
         pass
 
-    server_sock.settimeout(1.0)   # Timeout fuer accept() – erlaubt Button-Polling
+    server_sock.settimeout(0.05)   # Timeout fuer accept() – erlaubt Button-Polling
 
     bound = False
     for attempt in range(1, 6):
@@ -472,7 +512,7 @@ def main():
         tp_log("[Port " + str(PORT) + "] Command-Client verbunden: " + client_ip)
         tp_popup("Port " + str(PORT) + " – Client verbunden:\n" + client_ip)
 
-        client_sock.settimeout(1.0)   # Timeout fuer recv() – erlaubt Button-Polling
+        client_sock.settimeout(0.05)   # Timeout fuer recv() – erlaubt Button-Polling
         buf = ""
 
         # Command-Empfangs-Loop fuer diesen Client

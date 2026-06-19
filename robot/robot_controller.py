@@ -61,6 +61,11 @@ class RobotController:
         cmd = "PUSH"
         print(f"[Robot] {cmd}")
         return self.client.send_command(cmd)
+    def push_lose(self) -> bool:
+        """Fake-Belohnung wenn der Mensch verloren hat."""
+        cmd = "PUSH_LOSE"
+        print(f"[Robot] {cmd}")
+        return self.client.send_command(cmd)
 
     def go_home(self) -> bool:
         """Faehrt den Roboter zu GLOBAL_HOME."""
