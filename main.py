@@ -484,7 +484,7 @@ class MainApp:
         self._pending_starter:    str | None     = None   # "human"|"robot"|"random"
         self._pending_difficulty: str | None     = None   # difficulty-Konstante
         self._pending_reset:      bool           = False
-
+        self._pending_start:      bool           = False  #
         # Event-Listener (DRL → PC, Port 5007)
         self._event_listener: EventListener | None = None
         # Zweites Status-Fenster (Tkinter)
@@ -595,20 +595,6 @@ class MainApp:
             self._pending_difficulty = diff_map.get(value)
 
     def _on_button_event(self, event_str: str):
-        """
-        Callback des EventListener-Threads – läuft NICHT im Hauptthread!
-        Deshalb: nur Pending-Flags setzen, kein direktes pygame-/Spiellogik-Aufruf.
-
-        Erwartete Event-Formate:
-            EVENT:STARTER:human
-            EVENT:STARTER:robot
-            EVENT:STARTER:random
-            EVENT:STARTER:toggle      ← B1 kurz: aktuellen Starter umschalten
-            EVENT:DIFFICULTY:easy
-            EVENT:DIFFICULTY:medium
-            EVENT:DIFFICULTY:hard
-            EVENT:RESET
-        """
         parts = event_str.strip().split(":")
         if len(parts) < 2 or parts[0].upper() != "EVENT":
             return
@@ -616,25 +602,14 @@ class MainApp:
         kind = parts[1].upper()
 
         with self._pending_lock:
-
             # --- B1: Startspieler ---
             if kind == "STARTER" and len(parts) >= 3:
                 value = parts[2].lower()
-                if value == "toggle":
-                    # Kurzdruck: Mensch ↔ Roboter wechseln (Zufall bleibt)
-                    if self._pending_starter == "human" or self.starter == "human":
-                        self._pending_starter = "robot"
-                    elif self._pending_starter == "robot" or self.starter == "robot":
-                        self._pending_starter = "human"
-                    else:
-                        # Noch kein Starter gewählt → Mensch als Standard
-                        self._pending_starter = "human"
-                    print(f"[Button] Starter toggle → {self._pending_starter}")
-                elif value in ("human", "robot", "random"):
+                if value in ("human", "robot", "random"):
                     self._pending_starter = value
-                    print(f"[Button] Starter: {value}")
+                    print(f"[Button B1] Starter: {value}")
 
-            # --- B2/B3/B4: Schwierigkeit ---
+            # --- B2: Schwierigkeit durchwechseln ---
             elif kind == "DIFFICULTY" and len(parts) >= 3:
                 diff_map = {
                     "easy":   AI_DIFFICULTY_EASY,
@@ -644,40 +619,36 @@ class MainApp:
                 diff = parts[2].lower()
                 if diff in diff_map:
                     self._pending_difficulty = diff_map[diff]
-                    print(f"[Button] Schwierigkeit: {diff}")
+                    print(f"[Button B2] Schwierigkeit: {diff}")
 
-            # --- B5: Reset ---
+            # --- B3: Spiel starten ---
+            elif kind == "START":
+                self._pending_start = True
+                print("[Button B3] Start")
+
+            # --- B4: Reset ---
             elif kind == "RESET":
                 self._pending_reset = True
-                print("[Button] Reset")
-
+                print("[Button B4] Reset")
     def _process_pending_events(self):
-        """
-        Wird jeden Frame im Hauptthread aufgerufen.
-        Verarbeitet Pending-Flags aus _on_button_event() thread-sicher.
-
-        Reihenfolge:
-          1. Reset hat höchste Priorität
-          2. Schwierigkeit (setzt auch Runde neu, falls Starter bekannt)
-          3. Starter (speichert Wahl; Runde startet erst mit Schwierigkeitsbutton)
-        """
         with self._pending_lock:
             do_reset      = self._pending_reset
             do_difficulty = self._pending_difficulty
             do_starter    = self._pending_starter
+            do_start      = self._pending_start
 
             self._pending_reset      = False
             self._pending_difficulty = None
             self._pending_starter    = None
+            self._pending_start      = False
 
-        # --- Reset ---
+        # --- B4: Reset (höchste Priorität) ---
         if do_reset:
-            self.log("[Button B5] Vollständiger Reset", "warn")
+            self.log("[Button B4] Vollständiger Reset", "warn")
             self.full_reset()
-            return   # Reset überschreibt alles andere
+            return
 
-        # --- Schwierigkeit (B2/B3/B4) ---
-        # NEU
+        # --- B2: Schwierigkeit (setzt nur den Wert, startet NICHT das Spiel) ---
         if do_difficulty is not None:
             diff_label = {
                 AI_DIFFICULTY_EASY:   "Leicht",
@@ -685,25 +656,22 @@ class MainApp:
                 AI_DIFFICULTY_HARD:   "Schwer",
             }.get(do_difficulty, do_difficulty)
             self.game.set_difficulty(do_difficulty)
-            self.log(f"[Button] Schwierigkeit: {diff_label}", "info")
-        
-            # Falls noch kein Starter gewählt → automatisch Mensch
-            if self.starter is None:
-                self.starter = "human"
-                self.log("Kein Startspieler gesetzt – Mensch beginnt automatisch", "info")
-        
-            self.log("Runde wird gestartet...", "ok")
-            self.reset_round()
+            self.log(f"[Button B2] Schwierigkeit gewählt: {diff_label}", "info")
 
-        # --- Starter (B1) ---
+        # --- B1: Starter ---
         if do_starter is not None:
             self.starter = do_starter
             label = {"human": "Mensch", "robot": "Roboter",
                      "random": "Zufall"}.get(do_starter, do_starter)
-            self.log(f"[Button B1] Startspieler: {label} – "
-                     f"Drücke B2/B3/B4 zum Starten", "info")
-            # Runde startet NICHT hier – erst wenn Schwierigkeit gewählt wird
+            self.log(f"[Button B1] Startspieler gewählt: {label}", "info")
 
+        # --- B3: Start ---
+        if do_start:
+            if self.starter is None:
+                self.starter = "human"
+                self.log("Kein Startspieler gesetzt – Mensch beginnt automatisch", "info")
+            self.log("Runde wird gestartet...", "ok")
+            self.reset_round()
     # ------------------------------------------------------------------
     # Startspieler-Auswahl
     # ------------------------------------------------------------------
